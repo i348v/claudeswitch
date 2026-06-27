@@ -721,6 +721,33 @@ class ChatApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
         self._build_sidebar()
         self._build_main()
+        self._bind_scroll()
+
+    def _bind_scroll(self):
+        """Wire touchpad / mouse-wheel scroll for Linux (Button-4/5) and macOS/Windows."""
+        sidebar_canvas = self.conv_scroll._parent_canvas
+
+        def _route(e):
+            # Determine scroll direction
+            up = (e.num == 4) or (getattr(e, "delta", 0) > 0)
+            amt = -2 if up else 2
+
+            # Walk widget ancestry to decide which scrollable gets the event
+            w = e.widget
+            while w:
+                if w is self.chat:
+                    self.chat.yview_scroll(amt, "units")
+                    return
+                if w is self.conv_scroll or w is sidebar_canvas:
+                    sidebar_canvas.yview_scroll(amt, "units")
+                    return
+                try:
+                    w = self.nametowidget(w.winfo_parent())
+                except Exception:
+                    break
+
+        for seq in ("<Button-4>", "<Button-5>", "<MouseWheel>"):
+            self.bind_all(seq, _route, add=True)
 
     def _build_sidebar(self):
         sb = ctk.CTkFrame(self, width=230, corner_radius=0, fg_color=C["sidebar"])
