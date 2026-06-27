@@ -934,7 +934,7 @@ class ChatApp(ctk.CTk):
             selectbackground=C["select"],
             insertbackground="#e6edf3",
             spacing1=2, spacing3=6,
-            cursor="arrow",
+            cursor="xterm",
         )
         vsb = ctk.CTkScrollbar(chat_wrap, command=self.chat.yview)
         self.chat.configure(yscrollcommand=vsb.set)
@@ -942,6 +942,38 @@ class ChatApp(ctk.CTk):
         vsb.grid(row=0, column=1, sticky="ns")
 
         self.md = MarkdownRenderer(self.chat)
+
+        # ── Copy support (disabled Text widgets don't get keyboard focus) ──
+        def _copy_chat_selection(event=None):
+            try:
+                sel = self.chat.get(tk.SEL_FIRST, tk.SEL_LAST)
+                if sel:
+                    self.clipboard_clear()
+                    self.clipboard_append(sel)
+                    return "break"
+            except tk.TclError:
+                pass
+
+        def _chat_context_menu(event):
+            menu = tk.Menu(self.chat, tearoff=0,
+                           bg=C["card"], fg=C["text"],
+                           activebackground=C["active"], activeforeground="#fff",
+                           bd=0, relief=tk.FLAT)
+            try:
+                sel = self.chat.get(tk.SEL_FIRST, tk.SEL_LAST)
+                menu.add_command(label="Copy", command=lambda: (
+                    self.clipboard_clear(), self.clipboard_append(sel)))
+            except tk.TclError:
+                menu.add_command(label="Copy", state="disabled")
+            menu.add_separator()
+            menu.add_command(label="Copy All", command=lambda: (
+                self.clipboard_clear(),
+                self.clipboard_append(self.chat.get("1.0", tk.END).strip())))
+            menu.tk_popup(event.x_root, event.y_root)
+
+        self.bind_all("<Control-c>", _copy_chat_selection, add=True)
+        self.bind_all("<Control-C>", _copy_chat_selection, add=True)
+        self.chat.bind("<Button-3>", _chat_context_menu)
 
         # ── Input bar ──
         inp_bar = ctk.CTkFrame(main, corner_radius=0, fg_color=C["sidebar"])
