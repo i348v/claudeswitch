@@ -43,67 +43,95 @@ class AccountDialog(ctk.CTkToplevel):
     def __init__(self, parent, acc_id=None, acc=None, on_save=None):
         super().__init__(parent)
         self.title("Edit Account" if acc_id else "Add Account")
-        self.geometry("380x320")
-        self.resizable(False, False)
+        self.geometry("400x420")
+        self.resizable(False, True)
         self.attributes("-topmost", True)
         self.configure(fg_color=C["bg"])
-        self.grab_set()  # modal
+        self.grab_set()
 
         self._acc_id  = acc_id
         self._on_save = on_save
 
-        F_UI = ctk.CTkFont(size=13)
-        F_SM = ctk.CTkFont(size=11)
+        F_UI   = ctk.CTkFont(size=13)
+        F_SM   = ctk.CTkFont(size=11)
+        F_BOLD = ctk.CTkFont(size=12, weight="bold")
 
         pad = {"padx": 20, "pady": 5}
 
+        # Label
         ctk.CTkLabel(self, text="Label", font=F_SM, text_color=C["meta"],
                      anchor="w").pack(fill="x", padx=20, pady=(18, 0))
-        self.lbl_entry = ctk.CTkEntry(self, placeholder_text="e.g. Work API",
+        self.lbl_entry = ctk.CTkEntry(self, placeholder_text="e.g. Personal Sub, Work API",
                                       height=34, font=F_UI)
         self.lbl_entry.pack(fill="x", **pad)
 
         # Mode toggle
+        ctk.CTkLabel(self, text="Auth Mode", font=F_SM, text_color=C["meta"],
+                     anchor="w").pack(fill="x", padx=20, pady=(8, 0))
         mode_row = ctk.CTkFrame(self, fg_color="transparent")
         mode_row.pack(fill="x", **pad)
         mode_row.grid_columnconfigure((0, 1), weight=1)
 
         self._mode = tk.StringVar(value="subscription")
-        self.sub_btn = ctk.CTkButton(mode_row, text="● Subscription", height=32,
+        self.sub_btn = ctk.CTkButton(mode_row, text="● Subscription", height=34,
                                       font=F_SM, fg_color=C["sub"], text_color=C["bg"],
                                       command=lambda: self._set_mode("subscription"))
         self.sub_btn.grid(row=0, column=0, padx=(0, 4), sticky="ew")
-        self.api_btn = ctk.CTkButton(mode_row, text="● API Credits", height=32,
+        self.api_btn = ctk.CTkButton(mode_row, text="● API Credits", height=34,
                                       font=F_SM, fg_color="#21262d", text_color=C["meta"],
                                       command=lambda: self._set_mode("api"))
         self.api_btn.grid(row=0, column=1, padx=(4, 0), sticky="ew")
 
-        # API key (shown only in api mode)
+        # Subscription info box (shown in subscription mode)
+        self._sub_info = ctk.CTkFrame(self, fg_color="#1c2128", corner_radius=8)
+        sub_text = (
+            "Subscription uses your Claude.ai login via the Claude Code CLI.\n\n"
+            "Authentication is handled in your terminal — not here.\n\n"
+            "To log in:  run  claude login  in a terminal.\n"
+            "To add a 2nd account:  claude login --profile work"
+        )
+        ctk.CTkLabel(self._sub_info, text=sub_text, font=F_SM,
+                     text_color=C["meta"], justify="left", anchor="w",
+                     wraplength=340).pack(padx=14, pady=12)
+
+        # Profile name (subscription only, optional)
+        self._profile_frame = ctk.CTkFrame(self, fg_color="transparent")
+        ctk.CTkLabel(self._profile_frame, text="CLI Profile  (leave blank for default)",
+                     font=F_SM, text_color=C["meta"], anchor="w").pack(fill="x")
+        self.profile_entry = ctk.CTkEntry(self._profile_frame,
+                                           placeholder_text="e.g. work  →  claude login --profile work",
+                                           height=34, font=F_UI)
+        self.profile_entry.pack(fill="x", pady=(4, 0))
+
+        # API key (api mode only)
         self._key_frame = ctk.CTkFrame(self, fg_color="transparent")
         self._key_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(self._key_frame, text="Anthropic API Key",
+                     font=F_SM, text_color=C["meta"], anchor="w").grid(
+                         row=0, column=0, columnspan=2, sticky="w")
         self.key_entry = ctk.CTkEntry(self._key_frame, placeholder_text="sk-ant-...",
                                        show="•", height=34, font=F_UI)
-        self.key_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.key_entry.grid(row=1, column=0, sticky="ew", pady=(4, 0), padx=(0, 4))
         ctk.CTkButton(self._key_frame, text="👁", width=34, height=34,
                        fg_color="#21262d", hover_color="#30363d",
-                       command=self._toggle_vis).grid(row=0, column=1)
+                       command=self._toggle_vis).grid(row=1, column=1, pady=(4, 0))
 
         # Model
         ctk.CTkLabel(self, text="Model", font=F_SM, text_color=C["meta"],
-                     anchor="w").pack(fill="x", padx=20, pady=(6, 0))
+                     anchor="w").pack(fill="x", padx=20, pady=(10, 0))
         self.model_menu = ctk.CTkOptionMenu(self, values=MODELS, height=32, font=F_SM,
                                              fg_color="#21262d", button_color="#30363d",
                                              dropdown_fg_color=C["card"])
         self.model_menu.set(MODELS[0])
         self.model_menu.pack(fill="x", **pad)
 
-        # Buttons
+        # Save / Cancel
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row.pack(fill="x", padx=20, pady=(12, 0))
+        btn_row.pack(fill="x", padx=20, pady=(14, 16))
         btn_row.grid_columnconfigure((0, 1), weight=1)
-        ctk.CTkButton(btn_row, text="Save", height=34, font=F_UI,
+        ctk.CTkButton(btn_row, text="Save Account", height=36, font=F_UI,
                        command=self._save).grid(row=0, column=0, padx=(0, 6), sticky="ew")
-        ctk.CTkButton(btn_row, text="Cancel", height=34, font=F_UI,
+        ctk.CTkButton(btn_row, text="Cancel", height=36, font=F_UI,
                        fg_color="#21262d", hover_color="#30363d",
                        command=self.destroy).grid(row=0, column=1, padx=(6, 0), sticky="ew")
 
@@ -111,28 +139,36 @@ class AccountDialog(ctk.CTkToplevel):
         if acc:
             self.lbl_entry.insert(0, acc.get("label", ""))
             self.key_entry.insert(0, acc.get("api_key", ""))
+            self.profile_entry.insert(0, acc.get("profile", ""))
             self.model_menu.set(acc.get("model", MODELS[0]))
             self._set_mode(acc.get("mode", "subscription"))
+        else:
+            self._set_mode("subscription")
 
     def _set_mode(self, mode):
         self._mode.set(mode)
         if mode == "api":
             self.api_btn.configure(fg_color=C["api"], text_color=C["bg"])
             self.sub_btn.configure(fg_color="#21262d", text_color=C["meta"])
+            self._sub_info.pack_forget()
+            self._profile_frame.pack_forget()
             self._key_frame.pack(fill="x", padx=20, pady=5, before=self.model_menu)
         else:
             self.sub_btn.configure(fg_color=C["sub"], text_color=C["bg"])
             self.api_btn.configure(fg_color="#21262d", text_color=C["meta"])
             self._key_frame.pack_forget()
+            self._sub_info.pack(fill="x", padx=20, pady=5, before=self.model_menu)
+            self._profile_frame.pack(fill="x", padx=20, pady=(0, 5), before=self.model_menu)
 
     def _toggle_vis(self):
         self.key_entry.configure(show="" if self.key_entry.cget("show") == "•" else "•")
 
     def _save(self):
-        label = self.lbl_entry.get().strip()
-        mode  = self._mode.get()
-        key   = self.key_entry.get().strip()
-        model = self.model_menu.get()
+        label   = self.lbl_entry.get().strip()
+        mode    = self._mode.get()
+        key     = self.key_entry.get().strip()
+        model   = self.model_menu.get()
+        profile = self.profile_entry.get().strip()
 
         if not label:
             messagebox.showwarning("Missing label", "Please enter a label.", parent=self)
@@ -142,9 +178,10 @@ class AccountDialog(ctk.CTkToplevel):
             return
 
         if self._acc_id:
-            update_account(self._acc_id, label=label, mode=mode, api_key=key, model=model)
+            update_account(self._acc_id, label=label, mode=mode,
+                           api_key=key, model=model, profile=profile)
         else:
-            add_account(label, mode, key, model)
+            add_account(label, mode, key, model, profile=profile)
 
         self.destroy()
         if self._on_save:

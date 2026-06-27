@@ -62,6 +62,8 @@ def _subscription(messages, acc, on_chunk):
         )
 
     cmd = [claude_bin, "-p", prompt, "--model", acc.get("model", "claude-sonnet-4-6")]
+    if acc.get("profile"):
+        cmd += ["--profile", acc["profile"]]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
 
     if proc.returncode != 0:
