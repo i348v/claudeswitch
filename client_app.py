@@ -1030,6 +1030,12 @@ class ChatApp(ctk.CTk):
         self.chat.configure(state=tk.DISABLED)
         self.chat.see(tk.END)
 
+    def _write_system_notice(self, text: str):
+        self.chat.configure(state=tk.NORMAL)
+        self.chat.insert(tk.END, f"\n  {text}\n", "switch_banner")
+        self.chat.configure(state=tk.DISABLED)
+        self.chat.see(tk.END)
+
     # ── Config polling ─────────────────────────────────────────────────────────
 
     def _poll_config(self):
@@ -1209,7 +1215,7 @@ class ChatApp(ctk.CTk):
             elif m["role"] == "switch":
                 self.chat.insert(tk.END, f"\n  {m['content']}\n", "switch_banner")
             else:
-                mode = m.get("mode", cfg["mode"])
+                mode = m.get("mode", "subscription")
                 self._write_asst_header(mode)
                 self.md.render(m["content"])
         self.chat.configure(state=tk.DISABLED)
@@ -1281,7 +1287,7 @@ class ChatApp(ctk.CTk):
                                  if isinstance(b, dict) and b.get("type") == "text")
                 self._write_user_msg(disp, i)
             else:
-                self._write_asst_header(m.get("mode", cfg["mode"]))
+                self._write_asst_header(m.get("mode", "subscription"))
                 self.md.render(m["content"])
         self.chat.configure(state=tk.DISABLED)
         self.chat.see(tk.END)
@@ -1311,7 +1317,6 @@ class ChatApp(ctk.CTk):
 
     def _finish(self, full_text: str, usage: dict = {}):
         acc  = get_active()
-        cfg  = load_cfg()
         inp  = usage.get("input_tokens", 0)
         out  = usage.get("output_tokens", 0)
         model = usage.get("model", acc.get("model", "claude-sonnet-4-6"))
@@ -1329,9 +1334,9 @@ class ChatApp(ctk.CTk):
         self.chat.configure(state=tk.DISABLED)
         self.chat.see(tk.END)
 
-        add_message(self.current_conv_id, "assistant", full_text, cfg["mode"],
-                    cfg.get("model", ""), input_tokens=inp, output_tokens=out)
-        self.messages.append({"role": "assistant", "content": full_text, "mode": cfg["mode"]})
+        add_message(self.current_conv_id, "assistant", full_text, acc["mode"],
+                    acc.get("model", ""), input_tokens=inp, output_tokens=out)
+        self.messages.append({"role": "assistant", "content": full_text, "mode": acc["mode"]})
 
         # Update session totals
         if inp or out:

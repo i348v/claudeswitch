@@ -259,8 +259,8 @@ def import_from_claudeai(path: str) -> tuple[int, int]:
         if con.execute("SELECT 1 FROM conversations WHERE id=?", (conv_id,)).fetchone():
             continue
 
-        con.execute("INSERT INTO conversations VALUES (?,?,?,?)",
-                    (conv_id, title, created, updated))
+        con.execute("INSERT INTO conversations VALUES (?,?,?,?,?)",
+                    (conv_id, title, created, updated, None))
         conv_count += 1
 
         for msg in convo.get("chat_messages", []):
