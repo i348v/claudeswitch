@@ -90,6 +90,8 @@ class MarkdownRenderer:
         w.tag_configure("api_label",     foreground=C["api_acc"],   font=(base_font, base_size, "bold"))
         w.tag_configure("meta",          foreground=C["meta"],      font=(base_font, 10))
         w.tag_configure("error_msg",     foreground=C["error"],     font=(base_font, base_size))
+        w.tag_configure("switch_banner", foreground=C["meta"],      font=(base_font, 10, "italic"),
+                        lmargin1=8, spacing1=4, spacing3=4)
         w.tag_configure("thinking_txt",  foreground=C["thinking"],  font=(base_font, base_size, "italic"))
         w.tag_configure("streaming",     foreground="#79c0ff",      font=(base_font, base_size))
 
@@ -468,14 +470,30 @@ class ImportWizard(ctk.CTkToplevel):
             ).pack(fill="x", pady=2)
 
         elif domain in ("icloud.com", "me.com", "mac.com"):
-            self._pw_label.configure(text="App Password  (required for iCloud)")
+            self._pw_label.configure(text="App-Specific Password  (not your Apple ID password)")
+            ctk.CTkLabel(self._setup_inner,
+                         text="iCloud requires an App-Specific Password:",
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color="#e6edf3").pack(anchor="w", pady=(0, 4))
+            ctk.CTkLabel(
+                self._setup_inner,
+                text="  1.  Click the button below to open Apple ID\n"
+                     "  2.  Sign in with your Apple ID\n"
+                     "  3.  Go to  Sign-In and Security  →  App-Specific Passwords\n"
+                     "  4.  Click  ＋  and name it  ClaudeSwitch\n"
+                     "  5.  Copy the generated password and paste it below",
+                font=F_SM, text_color=C["meta"], justify="left",
+                anchor="w", wraplength=360,
+            ).pack(anchor="w", pady=(0, 6))
             ctk.CTkButton(
                 self._setup_inner,
-                text="Generate iCloud App Password (appleid.apple.com) →",
-                height=28, font=F_UI, anchor="w",
-                fg_color="#21262d", hover_color="#30363d", text_color="#79c0ff",
-                command=lambda: open_url("https://appleid.apple.com/account/manage"),
-            ).pack(fill="x", pady=2)
+                text="  Open Apple ID → App-Specific Passwords",
+                height=32, font=F_UI, anchor="w",
+                fg_color="#21262d", hover_color="#30363d", text_color="#e6edf3",
+                command=lambda: open_url(
+                    "https://appleid.apple.com/account/manage/section/security"
+                ),
+            ).pack(fill="x")
 
         elif domain in ("protonmail.com", "proton.me"):
             self._pw_label.configure(text="IMAP Bridge Password")
@@ -968,23 +986,21 @@ class ChatApp(ctk.CTk):
         acc = get_active()
         self.model_var.set(acc.get("model", MODELS[0]))
         self._update_mode_pill(acc)
+        self._last_account_id = new_id
 
-        # If mid-conversation, inject a handoff context on next send
         if self.messages:
-            self._last_account_id = new_id
             self._inject_handoff = True
-            self._write_system_notice(
-                f"Switched to account: {acc['label']}  "
-                f"({'API Credits' if acc['mode'] == 'api' else 'Subscription'}). "
-                f"Claude will be caught up on this conversation automatically."
+            mode_label = "API Credits" if acc["mode"] == "api" else "Subscription"
+            self._write_switch_banner(
+                f"↔  Switched to {acc['label']}  ({mode_label})  —  "
+                f"full conversation history shared"
             )
         else:
-            self._last_account_id = new_id
             self._inject_handoff = False
 
-    def _write_system_notice(self, text: str):
+    def _write_switch_banner(self, text: str):
         self.chat.configure(state=tk.NORMAL)
-        self.chat.insert(tk.END, f"\n  ⟳  {text}\n", "meta")
+        self.chat.insert(tk.END, f"\n  {text}\n", "switch_banner")
         self.chat.configure(state=tk.DISABLED)
         self.chat.see(tk.END)
 
@@ -1163,7 +1179,9 @@ class ChatApp(ctk.CTk):
         self.chat.configure(state=tk.NORMAL)
         for i, m in enumerate(self.messages):
             if m["role"] == "user":
-                self._write_user_msg(m["content"], i)
+                self._write_user_msg(m["content"], i, m.get("account_label", ""))
+            elif m["role"] == "switch":
+                self.chat.insert(tk.END, f"\n  {m['content']}\n", "switch_banner")
             else:
                 mode = m.get("mode", cfg["mode"])
                 self._write_asst_header(mode)
@@ -1190,13 +1208,14 @@ class ChatApp(ctk.CTk):
         self.chat.delete("1.0", tk.END)
         self.chat.configure(state=tk.DISABLED)
 
-    def _write_user_header(self):
+    def _write_user_header(self, account_label=""):
         self.chat.insert(tk.END, "\n")
-        self.chat.insert(tk.END, "  You\n", "user_acc")
+        suffix = f"  ·  {account_label}" if account_label else ""
+        self.chat.insert(tk.END, f"  You{suffix}\n", "user_acc")
 
-    def _write_user_msg(self, text: str, msg_idx: int):
+    def _write_user_msg(self, text: str, msg_idx: int, account_label: str = ""):
         """Write a user bubble with an embedded ✏ edit button."""
-        self._write_user_header()
+        self._write_user_header(account_label)
         self.chat.insert(tk.END, f"  {text}\n", "user_body")
         btn = tk.Button(
             self.chat,
@@ -1435,12 +1454,14 @@ class ChatApp(ctk.CTk):
             content = text
 
         stored_text = display_text if isinstance(content, list) else content
-        add_message(self.current_conv_id, "user", stored_text, acc["mode"])
-        self.messages.append({"role": "user", "content": content})
+        add_message(self.current_conv_id, "user", stored_text, acc["mode"],
+                    account_label=acc.get("label", ""))
+        self.messages.append({"role": "user", "content": content,
+                              "account_label": acc.get("label", "")})
         msg_idx = len(self.messages) - 1
 
         self.chat.configure(state=tk.NORMAL)
-        self._write_user_msg(display_text, msg_idx)
+        self._write_user_msg(display_text, msg_idx, acc.get("label", ""))
         self._write_asst_header(acc["mode"])
         self._begin_stream()
 

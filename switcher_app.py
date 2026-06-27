@@ -92,12 +92,13 @@ class AccountDialog(ctk.CTkToplevel):
         # Subscription info box
         self._sub_info = ctk.CTkFrame(scroll, fg_color="#1c2128", corner_radius=8)
         sub_text = (
-            "Subscription uses your Claude.ai login (Google, email, etc.).\n\n"
-            "To authenticate, run this in your terminal:\n\n"
+            "Subscription uses your Claude.ai login.\n"
+            "Supports: Google, Apple ID, or email.\n\n"
+            "Run once in your terminal:\n\n"
             "   claude login\n\n"
-            "Your browser will open — sign in with Google or email,\n"
-            "exactly like claude.ai. ClaudeSwitch will use that session.\n\n"
-            "Have multiple Claude accounts? Add each one with:\n\n"
+            "Your browser opens → choose  Sign in with Google,\n"
+            "Sign in with Apple, or email — exactly like claude.ai.\n\n"
+            "Multiple accounts? Run once per account:\n\n"
             "   claude login --profile work\n"
             "   claude login --profile personal\n\n"
             "Then set the Profile field below to match."
@@ -105,6 +106,17 @@ class AccountDialog(ctk.CTkToplevel):
         ctk.CTkLabel(self._sub_info, text=sub_text, font=F_SM,
                      text_color=C["meta"], justify="left", anchor="w",
                      wraplength=360).pack(padx=14, pady=12)
+        btn_row_sub = ctk.CTkFrame(self._sub_info, fg_color="transparent")
+        btn_row_sub.pack(fill="x", padx=14, pady=(0, 12))
+        btn_row_sub.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkButton(btn_row_sub, text="🔵  Google", height=28, font=F_SM,
+                       fg_color="#1f6feb", hover_color="#1a5cb0", text_color="#fff",
+                       command=lambda: __import__("subprocess").Popen(["claude", "login"])
+                       ).grid(row=0, column=0, padx=(0, 4), sticky="ew")
+        ctk.CTkButton(btn_row_sub, text="  Apple ID", height=28, font=F_SM,
+                       fg_color="#21262d", hover_color="#30363d", text_color="#e6edf3",
+                       command=lambda: __import__("subprocess").Popen(["claude", "login"])
+                       ).grid(row=0, column=1, padx=(4, 0), sticky="ew")
 
         # Profile name (subscription only)
         self._profile_frame = ctk.CTkFrame(scroll, fg_color="transparent")

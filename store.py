@@ -34,10 +34,13 @@ def init_db():
             FOREIGN KEY (conversation_id) REFERENCES conversations(id)
         );
     """)
-    # Migrate: add project_id to existing conversations table if missing
-    cols = [r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()]
-    if "project_id" not in cols:
+    # Migrations
+    conv_cols = [r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()]
+    if "project_id" not in conv_cols:
         con.execute("ALTER TABLE conversations ADD COLUMN project_id TEXT REFERENCES projects(id)")
+    msg_cols = [r[1] for r in con.execute("PRAGMA table_info(messages)").fetchall()]
+    if "account_label" not in msg_cols:
+        con.execute("ALTER TABLE messages ADD COLUMN account_label TEXT DEFAULT ''")
     con.commit()
     con.close()
 
@@ -106,12 +109,12 @@ def create_conversation(title="New Conversation", project_id: str | None = None)
     return conv_id
 
 
-def add_message(conv_id, role, content, mode, model=""):
+def add_message(conv_id, role, content, mode, model="", account_label=""):
     now = datetime.now().isoformat()
     con = _conn()
     con.execute(
-        "INSERT INTO messages (conversation_id,role,content,mode,model,created_at) VALUES (?,?,?,?,?,?)",
-        (conv_id, role, content, mode, model, now),
+        "INSERT INTO messages (conversation_id,role,content,mode,model,created_at,account_label) VALUES (?,?,?,?,?,?,?)",
+        (conv_id, role, content, mode, model, now, account_label),
     )
     con.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
     con.commit()
@@ -121,11 +124,12 @@ def add_message(conv_id, role, content, mode, model=""):
 def get_messages(conv_id):
     con = _conn()
     rows = con.execute(
-        "SELECT role,content,mode,model,created_at FROM messages WHERE conversation_id=? ORDER BY created_at",
+        "SELECT role,content,mode,model,created_at,account_label FROM messages WHERE conversation_id=? ORDER BY created_at",
         (conv_id,),
     ).fetchall()
     con.close()
-    return [{"role": r[0], "content": r[1], "mode": r[2], "model": r[3], "created_at": r[4]} for r in rows]
+    return [{"role": r[0], "content": r[1], "mode": r[2], "model": r[3],
+             "created_at": r[4], "account_label": r[5] if len(r) > 5 else ""} for r in rows]
 
 
 def get_conversations(project_id: str | None = None):
