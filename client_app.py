@@ -287,6 +287,7 @@ class ImportWizard(ctk.CTkToplevel):
 
         # Trigger setup card for any pre-filled value
         self._last_domain = ""
+        self._use_oauth   = False
         self._on_email_key()
 
         # ── Buttons ──
@@ -332,6 +333,9 @@ class ImportWizard(ctk.CTkToplevel):
         for w in self._setup_inner.winfo_children():
             w.destroy()
 
+        self._use_oauth = False
+        self._pw_entry.configure(state="normal")
+
         F_SM   = ctk.CTkFont(size=11)
         F_UI   = ctk.CTkFont(size=12)
 
@@ -339,9 +343,33 @@ class ImportWizard(ctk.CTkToplevel):
             webbrowser.open(url)
 
         if domain in ("gmail.com", "googlemail.com"):
-            self._pw_label.configure(
-                text="App Password  (16-digit code from step 2 — not your Gmail password)"
-            )
+            # ── Google OAuth path (primary) ──────────────────────────────
+            self._use_oauth = True
+            self._pw_label.configure(text="Password  (not needed for Sign in with Google)")
+            self._pw_entry.configure(state="disabled")
+
+            ctk.CTkLabel(self._setup_inner,
+                         text="Easiest — Sign in with Google",
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color="#e6edf3").pack(anchor="w", pady=(0, 4))
+            ctk.CTkButton(
+                self._setup_inner,
+                text="🔵  Sign in with Google",
+                height=36, font=F_UI,
+                fg_color="#1f6feb", hover_color="#1a5cb0", text_color="#fff",
+                command=self._start_google_watch,
+            ).pack(fill="x", pady=(0, 8))
+
+            # Divider with "or use App Password"
+            ctk.CTkFrame(self._setup_inner, height=1,
+                         fg_color=C["border"]).pack(fill="x", pady=(0, 8))
+            ctk.CTkLabel(self._setup_inner,
+                         text="Or use an App Password instead (advanced)",
+                         font=ctk.CTkFont(size=10), text_color=C["meta"],
+                         anchor="w").pack(anchor="w", pady=(0, 6))
+
+            self._pw_entry.configure(state="normal")
+            self._pw_label.configure(text="App Password  (16-digit code — not your Gmail password)")
 
             # Step 1
             ctk.CTkLabel(self._setup_inner,
@@ -474,6 +502,21 @@ class ImportWizard(ctk.CTkToplevel):
     def _set_status(self, msg: str, color: str = C["meta"]):
         self._status_var.set(msg)
         self._status_lbl.configure(text_color=color)
+
+    def _start_google_watch(self):
+        from gmail_oauth import watch as google_watch
+        self._stop_event.clear()
+        self._set_status("Opening browser for Google Sign-In…", C["meta"])
+        threading.Thread(
+            target=google_watch,
+            kwargs=dict(
+                on_status=lambda m: self.after(0, lambda msg=m: self._set_status(msg)),
+                on_found=self._on_found,
+                on_error=lambda m: self.after(0, lambda msg=m: self._on_error(msg)),
+                stop_event=self._stop_event,
+            ),
+            daemon=True,
+        ).start()
 
     def _start_watch(self):
         from email_watcher import watch
