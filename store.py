@@ -101,6 +101,28 @@ def update_title(conv_id, title):
     con.close()
 
 
+def truncate_messages(conv_id: str, keep_n: int):
+    """Delete all messages after the first keep_n in a conversation."""
+    con = _conn()
+    rows = con.execute(
+        "SELECT id FROM messages WHERE conversation_id=? ORDER BY created_at, id",
+        (conv_id,),
+    ).fetchall()
+    if keep_n >= len(rows):
+        con.close()
+        return
+    if keep_n == 0:
+        con.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
+    else:
+        last_keep_id = rows[keep_n - 1][0]
+        con.execute(
+            "DELETE FROM messages WHERE conversation_id=? AND id > ?",
+            (conv_id, last_keep_id),
+        )
+    con.commit()
+    con.close()
+
+
 def delete_conversation(conv_id):
     con = _conn()
     con.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))

@@ -27,6 +27,7 @@ from store import (
     get_conversations, search_conversations,
     get_messages,
     init_db,
+    truncate_messages,
     update_title,
 )
 
@@ -969,10 +970,9 @@ class ChatApp(ctk.CTk):
         cfg = load_cfg()
 
         self.chat.configure(state=tk.NORMAL)
-        for m in self.messages:
+        for i, m in enumerate(self.messages):
             if m["role"] == "user":
-                self._write_user_header()
-                self.chat.insert(tk.END, f"  {m['content']}\n", "user_body")
+                self._write_user_msg(m["content"], i)
             else:
                 mode = m.get("mode", cfg["mode"])
                 self._write_asst_header(mode)
@@ -1002,6 +1002,54 @@ class ChatApp(ctk.CTk):
     def _write_user_header(self):
         self.chat.insert(tk.END, "\n")
         self.chat.insert(tk.END, "  You\n", "user_acc")
+
+    def _write_user_msg(self, text: str, msg_idx: int):
+        """Write a user bubble with an embedded ✏ edit button."""
+        self._write_user_header()
+        self.chat.insert(tk.END, f"  {text}\n", "user_body")
+        btn = tk.Button(
+            self.chat,
+            text="  ✏ edit",
+            bg=C["bg"], fg=C["meta"],
+            activebackground=C["bg"], activeforeground="#e6edf3",
+            relief=tk.FLAT, padx=4, pady=1,
+            font=(MONO[0], 9), cursor="hand2", bd=0,
+            command=lambda idx=msg_idx: self._edit_message(idx),
+        )
+        self.chat.window_create(tk.END, window=btn)
+        self.chat.insert(tk.END, "\n")
+
+    def _edit_message(self, msg_idx: int):
+        """Reload a past user message into the input and truncate history after it."""
+        if self.is_loading or msg_idx >= len(self.messages):
+            return
+        content = self.messages[msg_idx]["content"]
+        if isinstance(content, list):
+            content = "\n".join(
+                b.get("text", "") for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        self.inp.delete("1.0", tk.END)
+        self.inp.insert("1.0", content)
+
+        self.messages = self.messages[:msg_idx]
+        truncate_messages(self.current_conv_id, msg_idx)
+
+        cfg = load_cfg()
+        self._clear_chat()
+        self.chat.configure(state=tk.NORMAL)
+        for i, m in enumerate(self.messages):
+            if m["role"] == "user":
+                disp = m["content"] if isinstance(m["content"], str) else \
+                       "\n".join(b.get("text","") for b in m["content"]
+                                 if isinstance(b, dict) and b.get("type") == "text")
+                self._write_user_msg(disp, i)
+            else:
+                self._write_asst_header(m.get("mode", cfg["mode"]))
+                self.md.render(m["content"])
+        self.chat.configure(state=tk.DISABLED)
+        self.chat.see(tk.END)
+        self.inp.focus()
 
     def _write_asst_header(self, mode: str):
         tag = "api_label" if mode == "api" else "asst_label"
@@ -1198,10 +1246,10 @@ class ChatApp(ctk.CTk):
         stored_text = display_text if isinstance(content, list) else content
         add_message(self.current_conv_id, "user", stored_text, acc["mode"])
         self.messages.append({"role": "user", "content": content})
+        msg_idx = len(self.messages) - 1
 
         self.chat.configure(state=tk.NORMAL)
-        self._write_user_header()
-        self.chat.insert(tk.END, f"  {display_text}\n", "user_body")
+        self._write_user_msg(display_text, msg_idx)
         self._write_asst_header(acc["mode"])
         self._begin_stream()
 
