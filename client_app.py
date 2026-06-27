@@ -15,7 +15,11 @@ import customtkinter as ctk
 
 from artifacts import create_artifact
 from claude_backend import chat
-from config_manager import load as load_cfg, save as save_cfg
+from config_manager import (
+    load as load_cfg, save as save_cfg,
+    get_active, get_active_id, set_active,
+    list_accounts, update_account,
+)
 from store import (
     add_message,
     create_conversation,
@@ -213,6 +217,8 @@ class ChatApp(ctk.CTk):
         self._stop_event = threading.Event()
         self._stream_idx = "1.0"
         self._conv_buttons: dict[str, ctk.CTkButton] = {}
+        self._last_account_id: str = get_active_id()
+        self._inject_handoff: bool = False
 
         # Fonts (must come after super().__init__)
         self.F_UI   = ctk.CTkFont(size=13)
@@ -281,28 +287,40 @@ class ChatApp(ctk.CTk):
         )
         self.title_lbl.grid(row=0, column=0, padx=(18, 8), pady=14, sticky="w")
 
+        # Account dropdown
+        self.account_var = tk.StringVar()
+        self.account_menu = ctk.CTkOptionMenu(
+            hdr, variable=self.account_var,
+            values=[""], width=180, height=28, font=self.F_SM,
+            command=self._on_account_change,
+            fg_color="#21262d", button_color="#30363d",
+            dropdown_fg_color=C["sidebar"],
+        )
+        self.account_menu.grid(row=0, column=1, padx=6, pady=14)
+        self._rebuild_account_menu()
+
         # Model selector
-        cfg = load_cfg()
-        self.model_var = tk.StringVar(value=cfg.get("model", MODELS[0]))
+        acc = get_active()
+        self.model_var = tk.StringVar(value=acc.get("model", MODELS[0]))
         self.model_menu = ctk.CTkOptionMenu(
             hdr, values=MODELS, variable=self.model_var,
-            width=200, height=28, font=self.F_SM,
+            width=190, height=28, font=self.F_SM,
             command=self._on_model_change,
             fg_color="#21262d", button_color="#30363d",
             dropdown_fg_color=C["sidebar"],
         )
-        self.model_menu.grid(row=0, column=1, padx=6, pady=14)
+        self.model_menu.grid(row=0, column=2, padx=6, pady=14)
 
         self.mode_pill = ctk.CTkLabel(
             hdr, text="● Subscription", font=self.F_SM, text_color=C["asst_acc"]
         )
-        self.mode_pill.grid(row=0, column=2, padx=(0, 4), pady=14)
+        self.mode_pill.grid(row=0, column=3, padx=(0, 4), pady=14)
 
         ctk.CTkButton(
             hdr, text="🗑", width=30, height=30, fg_color="transparent",
             hover_color="#21262d", font=ctk.CTkFont(size=15),
             command=self._delete_conv,
-        ).grid(row=0, column=3, padx=(0, 10), pady=14)
+        ).grid(row=0, column=4, padx=(0, 10), pady=14)
 
         # ── Chat area ──
         chat_wrap = ctk.CTkFrame(main, fg_color=C["bg"], corner_radius=0)
@@ -356,20 +374,84 @@ class ChatApp(ctk.CTk):
             text_color="#adbac7", command=self._export_artifact,
         ).pack()
 
+    # ── Account menu ───────────────────────────────────────────────────────────
+
+    def _rebuild_account_menu(self):
+        accounts = list_accounts()
+        active_id = get_active_id()
+        labels = [f"{acc['label']} ({'api' if acc['mode'] == 'api' else 'sub'})"
+                  for _, acc in accounts]
+        self._account_ids = [acc_id for acc_id, _ in accounts]
+        self.account_menu.configure(values=labels if labels else [""])
+        try:
+            idx = self._account_ids.index(active_id)
+            self.account_var.set(labels[idx])
+        except (ValueError, IndexError):
+            if labels:
+                self.account_var.set(labels[0])
+
+    def _on_account_change(self, choice: str):
+        labels = self.account_menu.cget("values")
+        try:
+            idx = list(labels).index(choice)
+            new_id = self._account_ids[idx]
+        except (ValueError, IndexError):
+            return
+        if new_id == get_active_id():
+            return
+        set_active(new_id)
+        self._handle_account_switch(new_id)
+
+    def _handle_account_switch(self, new_id: str):
+        acc = get_active()
+        self.model_var.set(acc.get("model", MODELS[0]))
+        self._update_mode_pill(acc)
+
+        # If mid-conversation, inject a handoff context on next send
+        if self.messages:
+            self._last_account_id = new_id
+            self._inject_handoff = True
+            self._write_system_notice(
+                f"Switched to account: {acc['label']}  "
+                f"({'API Credits' if acc['mode'] == 'api' else 'Subscription'}). "
+                f"Claude will be caught up on this conversation automatically."
+            )
+        else:
+            self._last_account_id = new_id
+            self._inject_handoff = False
+
+    def _write_system_notice(self, text: str):
+        self.chat.configure(state=tk.NORMAL)
+        self.chat.insert(tk.END, f"\n  ⟳  {text}\n", "meta")
+        self.chat.configure(state=tk.DISABLED)
+        self.chat.see(tk.END)
+
     # ── Config polling ─────────────────────────────────────────────────────────
 
     def _poll_config(self):
-        cfg = load_cfg()
-        if cfg["mode"] == "api":
+        acc = get_active()
+        self._update_mode_pill(acc)
+
+        # Detect external account switch (from account manager window)
+        current_id = get_active_id()
+        if current_id != self._last_account_id:
+            self._last_account_id = current_id
+            self._rebuild_account_menu()
+            self.model_var.set(acc.get("model", MODELS[0]))
+
+        # Rebuild dropdown if accounts changed
+        self._rebuild_account_menu()
+
+        self.after(1500, self._poll_config)
+
+    def _update_mode_pill(self, acc: dict):
+        if acc["mode"] == "api":
             self.mode_pill.configure(text="● API Credits", text_color=C["api_acc"])
         else:
             self.mode_pill.configure(text="● Subscription", text_color=C["asst_acc"])
-        self.after(1500, self._poll_config)
 
     def _on_model_change(self, model: str):
-        cfg = load_cfg()
-        cfg["model"] = model
-        save_cfg(cfg)
+        update_account(get_active_id(), model=model)
 
     # ── Response queue polling ─────────────────────────────────────────────────
 
@@ -525,8 +607,20 @@ class ChatApp(ctk.CTk):
             return
 
         self.inp.delete("1.0", tk.END)
-        cfg = load_cfg()
-        add_message(self.current_conv_id, "user", text, cfg["mode"])
+        acc = get_active()
+
+        # Handoff: prepend context summary so the new account is caught up
+        if self._inject_handoff and self.messages:
+            history = "\n".join(
+                f"{'Human' if m['role'] == 'user' else 'Assistant'}: {m['content'][:300]}"
+                for m in self.messages[-6:]
+            )
+            text = (
+                f"[Account switch. Conversation so far:\n{history}\n]\n\n{text}"
+            )
+            self._inject_handoff = False
+
+        add_message(self.current_conv_id, "user", text, acc["mode"])
         self.messages.append({"role": "user", "content": text})
 
         self.chat.configure(state=tk.NORMAL)

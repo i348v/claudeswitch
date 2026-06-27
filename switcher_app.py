@@ -1,232 +1,303 @@
 """
-Claude Client — Mode Switcher
-A small floating window to toggle between Claude subscription and API credits.
-Run standalone:  python switcher_app.py
-Or launched from the gear icon in the main client.
+ClaudeSwitch — Account Manager
+Manage multiple accounts and switch between them seamlessly.
+Launched via the ⚙ button in the main client, or: python switcher_app.py
 """
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
 
-from config_manager import load as load_cfg, save as save_cfg
+from config_manager import (
+    load, save,
+    get_active_id, set_active,
+    list_accounts, add_account,
+    update_account, remove_account,
+)
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 C = {
-    "bg":       "#0d1117",
-    "card":     "#161b22",
-    "border":   "#21262d",
-    "sub":      "#3fb950",
-    "api":      "#d29922",
-    "inactive": "#484f58",
-    "text":     "#e6edf3",
-    "meta":     "#8b949e",
+    "bg":      "#0d1117",
+    "card":    "#161b22",
+    "border":  "#21262d",
+    "hover":   "#1c2128",
+    "sub":     "#3fb950",
+    "api":     "#d29922",
+    "text":    "#e6edf3",
+    "meta":    "#8b949e",
+    "error":   "#f85149",
+    "active":  "#1f6feb",
 }
 
+MODELS = [
+    "claude-sonnet-4-6",
+    "claude-opus-4-8",
+    "claude-haiku-4-5-20251001",
+]
 
-class SwitcherApp(ctk.CTk):
+
+class AccountManager(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Mode Switcher")
-        self.geometry("360x440")
+        self.title("Account Manager")
+        self.geometry("420x580")
         self.resizable(False, False)
         self.attributes("-topmost", True)
         self.configure(fg_color=C["bg"])
 
-        self._cfg = load_cfg()
-        self._pending_mode = tk.StringVar(value=self._cfg["mode"])
-        self._status_var = tk.StringVar(value="")
+        self.F_BOLD = ctk.CTkFont(size=13, weight="bold")
+        self.F_UI   = ctk.CTkFont(size=13)
+        self.F_SM   = ctk.CTkFont(size=11)
+
+        self._editing: str | None = None  # acc_id being edited
+        self._status_var = tk.StringVar()
 
         self._build_ui()
-        self._refresh_display()
+        self._refresh()
         self._poll()
 
     def _build_ui(self):
-        pad = {"padx": 20, "pady": 10}
+        # Title
+        top = ctk.CTkFrame(self, fg_color="transparent")
+        top.pack(fill="x", padx=20, pady=(20, 4))
+        ctk.CTkLabel(top, text="Account Manager", font=self.F_BOLD,
+                     text_color=C["text"]).pack(side="left")
+        ctk.CTkButton(top, text="＋ Add Account", width=110, height=28,
+                      font=self.F_SM, command=self._show_add_form).pack(side="right")
 
-        # ── Title ──
-        ctk.CTkLabel(
-            self, text="Mode Switcher",
-            font=ctk.CTkFont(size=17, weight="bold"),
-            text_color=C["text"],
-        ).pack(pady=(22, 4))
+        ctk.CTkLabel(self, text="Click an account to make it active.",
+                     font=self.F_SM, text_color=C["meta"]).pack(padx=20, anchor="w")
 
-        ctk.CTkLabel(
-            self, text="Switch between Claude subscription\nand direct API credits",
-            font=ctk.CTkFont(size=11), text_color=C["meta"],
-        ).pack(pady=(0, 14))
+        # Account list (scrollable)
+        self.list_frame = ctk.CTkScrollableFrame(self, fg_color="transparent", height=280)
+        self.list_frame.pack(fill="x", padx=20, pady=(8, 0))
+        self.list_frame.grid_columnconfigure(0, weight=1)
 
-        # ── Current mode card ──
-        card = ctk.CTkFrame(self, fg_color=C["card"], corner_radius=12)
-        card.pack(fill="x", **pad)
+        # Divider
+        ctk.CTkFrame(self, height=1, fg_color=C["border"]).pack(fill="x", padx=20, pady=12)
 
-        ctk.CTkLabel(card, text="ACTIVE MODE", font=ctk.CTkFont(size=10),
-                     text_color=C["meta"]).pack(pady=(12, 2))
-        self.active_lbl = ctk.CTkLabel(
-            card, text="", font=ctk.CTkFont(size=20, weight="bold"),
-        )
-        self.active_lbl.pack(pady=(0, 12))
+        # Add / Edit form (hidden until needed)
+        self.form_frame = ctk.CTkFrame(self, fg_color=C["card"], corner_radius=12)
+        # (packed on demand)
 
-        # ── Toggle buttons ──
-        toggle_frame = ctk.CTkFrame(self, fg_color="transparent")
-        toggle_frame.pack(fill="x", padx=20, pady=(4, 0))
-        toggle_frame.grid_columnconfigure(0, weight=1)
-        toggle_frame.grid_columnconfigure(1, weight=1)
+        self._build_form()
 
-        self.sub_btn = ctk.CTkButton(
-            toggle_frame,
-            text="● Subscription",
-            height=48,
+        # Status
+        ctk.CTkLabel(self, textvariable=self._status_var,
+                     font=self.F_SM, text_color=C["sub"]).pack(pady=(4, 8))
+
+    def _build_form(self):
+        f = self.form_frame
+        pad = {"padx": 14, "pady": 4}
+
+        ctk.CTkLabel(f, text="ADD ACCOUNT", font=ctk.CTkFont(size=10),
+                     text_color=C["meta"]).pack(anchor="w", padx=14, pady=(12, 0))
+
+        self.form_label = ctk.CTkEntry(f, placeholder_text="Label  e.g. Work API",
+                                       height=32, font=self.F_UI)
+        self.form_label.pack(fill="x", **pad)
+
+        mode_row = ctk.CTkFrame(f, fg_color="transparent")
+        mode_row.pack(fill="x", **pad)
+        mode_row.grid_columnconfigure((0, 1), weight=1)
+
+        self.form_mode = tk.StringVar(value="subscription")
+        self.sub_btn = ctk.CTkButton(mode_row, text="● Subscription", height=30,
+                                      font=self.F_SM, fg_color=C["sub"], text_color=C["bg"],
+                                      command=lambda: self._set_form_mode("subscription"))
+        self.sub_btn.grid(row=0, column=0, padx=(0, 4), sticky="ew")
+        self.api_btn = ctk.CTkButton(mode_row, text="● API Credits", height=30,
+                                      font=self.F_SM, fg_color="#21262d", text_color=C["meta"],
+                                      command=lambda: self._set_form_mode("api"))
+        self.api_btn.grid(row=0, column=1, padx=(4, 0), sticky="ew")
+
+        self.key_frame = ctk.CTkFrame(f, fg_color="transparent")
+        self.key_frame.pack(fill="x", padx=14, pady=4)
+        self.key_frame.grid_columnconfigure(0, weight=1)
+        self.form_key = ctk.CTkEntry(self.key_frame, placeholder_text="sk-ant-...",
+                                      show="•", height=32, font=self.F_UI)
+        self.form_key.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(self.key_frame, text="👁", width=32, height=32,
+                       fg_color="#21262d", hover_color="#30363d",
+                       command=self._toggle_key_vis).grid(row=0, column=1)
+        self.key_frame.pack_forget()
+
+        self.form_model = ctk.CTkOptionMenu(f, values=MODELS, height=30, font=self.F_SM,
+                                             fg_color="#21262d", button_color="#30363d",
+                                             dropdown_fg_color=C["card"])
+        self.form_model.set(MODELS[0])
+        self.form_model.pack(fill="x", **pad)
+
+        btn_row = ctk.CTkFrame(f, fg_color="transparent")
+        btn_row.pack(fill="x", padx=14, pady=(4, 12))
+        btn_row.grid_columnconfigure((0, 1), weight=1)
+        self.save_btn = ctk.CTkButton(btn_row, text="Save", height=30, font=self.F_UI,
+                                       command=self._save_form)
+        self.save_btn.grid(row=0, column=0, padx=(0, 4), sticky="ew")
+        ctk.CTkButton(btn_row, text="Cancel", height=30, font=self.F_UI,
+                       fg_color="#21262d", hover_color="#30363d",
+                       command=self._hide_form).grid(row=0, column=1, padx=(4, 0), sticky="ew")
+
+    def _refresh(self):
+        for w in self.list_frame.winfo_children():
+            w.destroy()
+
+        active_id = get_active_id()
+        accounts = list_accounts()
+
+        for acc_id, acc in accounts:
+            is_active = acc_id == active_id
+            self._build_account_row(acc_id, acc, is_active)
+
+        if not accounts:
+            ctk.CTkLabel(self.list_frame, text="No accounts yet. Add one above.",
+                         font=self.F_SM, text_color=C["meta"]).grid(pady=20)
+
+    def _build_account_row(self, acc_id: str, acc: dict, is_active: bool):
+        card = ctk.CTkFrame(
+            self.list_frame,
+            fg_color=C["hover"] if is_active else C["card"],
             corner_radius=10,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=lambda: self._select("subscription"),
+            border_width=2 if is_active else 0,
+            border_color=C["active"] if is_active else C["border"],
         )
-        self.sub_btn.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+        card.grid(sticky="ew", pady=3)
+        card.grid_columnconfigure(0, weight=1)
 
-        self.api_btn = ctk.CTkButton(
-            toggle_frame,
-            text="● API Credits",
-            height=48,
-            corner_radius=10,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=lambda: self._select("api"),
-        )
-        self.api_btn.grid(row=0, column=1, padx=(6, 0), sticky="ew")
+        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner.grid(row=0, column=0, sticky="ew", padx=12, pady=8)
+        inner.grid_columnconfigure(0, weight=1)
 
-        # ── API key section ──
-        self.api_section = ctk.CTkFrame(self, fg_color=C["card"], corner_radius=12)
-        self.api_section.pack(fill="x", padx=20, pady=(12, 0))
+        # Label + mode badge
+        top_row = ctk.CTkFrame(inner, fg_color="transparent")
+        top_row.grid(row=0, column=0, sticky="ew")
+        top_row.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            self.api_section, text="Anthropic API Key",
-            font=ctk.CTkFont(size=11, weight="bold"), text_color=C["meta"],
-        ).pack(anchor="w", padx=14, pady=(12, 4))
+        label_text = ("✦  " if is_active else "   ") + acc["label"]
+        ctk.CTkLabel(top_row, text=label_text, font=self.F_BOLD,
+                     text_color=C["text"] if is_active else "#adbac7",
+                     anchor="w").grid(row=0, column=0, sticky="w")
 
-        key_row = ctk.CTkFrame(self.api_section, fg_color="transparent")
-        key_row.pack(fill="x", padx=14, pady=(0, 12))
-        key_row.grid_columnconfigure(0, weight=1)
+        mode_color = C["sub"] if acc["mode"] == "subscription" else C["api"]
+        mode_text  = "sub" if acc["mode"] == "subscription" else "api"
+        ctk.CTkLabel(top_row, text=f"● {mode_text}", font=self.F_SM,
+                     text_color=mode_color).grid(row=0, column=1, padx=(4, 0))
 
-        self.key_entry = ctk.CTkEntry(
-            key_row, placeholder_text="sk-ant-...",
-            show="•", height=34, font=ctk.CTkFont(size=12),
-        )
-        self.key_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        # Model
+        ctk.CTkLabel(inner, text=acc.get("model", ""), font=self.F_SM,
+                     text_color=C["meta"], anchor="w").grid(row=1, column=0, sticky="w")
 
-        self.eye_btn = ctk.CTkButton(
-            key_row, text="👁", width=34, height=34,
-            fg_color="#21262d", hover_color="#30363d",
-            command=self._toggle_key_visibility,
-        )
-        self.eye_btn.grid(row=0, column=1)
+        # Buttons
+        btn_row = ctk.CTkFrame(card, fg_color="transparent")
+        btn_row.grid(row=0, column=1, padx=(0, 8), pady=8)
 
-        existing_key = self._cfg.get("api_key", "")
-        if existing_key:
-            self.key_entry.insert(0, existing_key)
+        if not is_active:
+            ctk.CTkButton(btn_row, text="Switch", width=64, height=26, font=self.F_SM,
+                           command=lambda aid=acc_id: self._switch(aid)).pack(side="left", padx=2)
 
-        # ── Apply button ──
-        self.apply_btn = ctk.CTkButton(
-            self,
-            text="Apply Switch",
-            height=42,
-            corner_radius=10,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            command=self._apply,
-        )
-        self.apply_btn.pack(fill="x", padx=20, pady=(14, 6))
+        ctk.CTkButton(btn_row, text="Edit", width=48, height=26, font=self.F_SM,
+                       fg_color="#21262d", hover_color="#30363d",
+                       command=lambda aid=acc_id, a=acc: self._show_edit_form(aid, a)
+                       ).pack(side="left", padx=2)
 
-        # ── Status label ──
-        self.status_lbl = ctk.CTkLabel(
-            self, textvariable=self._status_var,
-            font=ctk.CTkFont(size=11), text_color=C["meta"],
-        )
-        self.status_lbl.pack(pady=(2, 12))
+        if len(list_accounts()) > 1:
+            ctk.CTkButton(btn_row, text="✕", width=28, height=26, font=self.F_SM,
+                           fg_color="#21262d", hover_color="#6e1313", text_color=C["error"],
+                           command=lambda aid=acc_id, lbl=acc["label"]: self._delete(aid, lbl)
+                           ).pack(side="left", padx=2)
 
-    def _select(self, mode):
-        self._pending_mode.set(mode)
-        self._refresh_display()
+    def _switch(self, acc_id: str):
+        set_active(acc_id)
+        self._refresh()
+        acc = dict(list_accounts())[acc_id] if acc_id in dict(list_accounts()) else {}
+        cfg = load()
+        label = cfg["accounts"][acc_id]["label"]
+        self._status(f"✓ Switched to {label}")
 
-    def _refresh_display(self):
-        cfg = load_cfg()
-        active = cfg["mode"]
-        pending = self._pending_mode.get()
-
-        # Active mode card
-        if active == "api":
-            self.active_lbl.configure(text="API Credits", text_color=C["api"])
-        else:
-            self.active_lbl.configure(text="Subscription", text_color=C["sub"])
-
-        # Toggle buttons: highlight selected pending mode
-        sub_active = pending == "subscription"
-        api_active = pending == "api"
-
-        self.sub_btn.configure(
-            fg_color=C["sub"] if sub_active else "#21262d",
-            text_color=C["bg"] if sub_active else C["inactive"],
-            hover_color="#2ea043" if sub_active else "#30363d",
-        )
-        self.api_btn.configure(
-            fg_color=C["api"] if api_active else "#21262d",
-            text_color=C["bg"] if api_active else C["inactive"],
-            hover_color="#b08800" if api_active else "#30363d",
-        )
-
-        # Show/hide API key section
-        if pending == "api":
-            self.api_section.pack(fill="x", padx=20, pady=(12, 0))
-        else:
-            self.api_section.pack_forget()
-
-        # Apply button: grey out if already on this mode
-        if pending == active:
-            self.apply_btn.configure(
-                text="Already Active",
-                fg_color="#21262d",
-                text_color=C["meta"],
-                state="disabled",
-            )
-        else:
-            self.apply_btn.configure(
-                text=f"Switch to {'API Credits' if pending == 'api' else 'Subscription'}",
-                fg_color="#1f6feb",
-                text_color=C["text"],
-                state="normal",
-            )
-
-    def _apply(self):
-        pending = self._pending_mode.get()
-        api_key = self.key_entry.get().strip() if pending == "api" else None
-
-        if pending == "api" and not api_key:
-            self._status("⚠ Enter your Anthropic API key first.", error=True)
+    def _delete(self, acc_id: str, label: str):
+        if not messagebox.askyesno("Delete account", f"Delete '{label}'?"):
             return
+        remove_account(acc_id)
+        self._refresh()
 
-        cfg = load_cfg()
-        cfg["mode"] = pending
-        if api_key:
-            cfg["api_key"] = api_key
-        save_cfg(cfg)
+    # ── Form ──────────────────────────────────────────────────────────────────
 
-        label = "API Credits" if pending == "api" else "Subscription"
-        self._status(f"✓ Switched to {label}. Main client updates in ~2s.")
-        self._refresh_display()
+    def _show_add_form(self):
+        self._editing = None
+        self.form_label.delete(0, tk.END)
+        self.form_key.delete(0, tk.END)
+        self.form_model.set(MODELS[0])
+        self._set_form_mode("subscription")
+        self.form_frame.pack(fill="x", padx=20, pady=(0, 4))
+        # Update title
+        for w in self.form_frame.winfo_children():
+            if isinstance(w, ctk.CTkLabel) and "ACCOUNT" in (w.cget("text") or ""):
+                w.configure(text="ADD ACCOUNT")
+                break
 
-    def _status(self, msg, error=False):
+    def _show_edit_form(self, acc_id: str, acc: dict):
+        self._editing = acc_id
+        self.form_label.delete(0, tk.END)
+        self.form_label.insert(0, acc["label"])
+        self.form_key.delete(0, tk.END)
+        self.form_key.insert(0, acc.get("api_key", ""))
+        self.form_model.set(acc.get("model", MODELS[0]))
+        self._set_form_mode(acc["mode"])
+        self.form_frame.pack(fill="x", padx=20, pady=(0, 4))
+
+    def _hide_form(self):
+        self.form_frame.pack_forget()
+        self._editing = None
+
+    def _save_form(self):
+        label = self.form_label.get().strip()
+        mode  = self.form_mode.get()
+        key   = self.form_key.get().strip()
+        model = self.form_model.get()
+
+        if not label:
+            self._status("⚠ Enter a label.", error=True); return
+        if mode == "api" and not key:
+            self._status("⚠ Enter an API key for API mode.", error=True); return
+
+        if self._editing:
+            update_account(self._editing, label=label, mode=mode, api_key=key, model=model)
+            self._status(f"✓ Updated '{label}'")
+        else:
+            acc_id = add_account(label, mode, key, model)
+            self._status(f"✓ Added '{label}'")
+
+        self._hide_form()
+        self._refresh()
+
+    def _set_form_mode(self, mode: str):
+        self.form_mode.set(mode)
+        if mode == "api":
+            self.api_btn.configure(fg_color=C["api"], text_color=C["bg"])
+            self.sub_btn.configure(fg_color="#21262d", text_color=C["meta"])
+            self.key_frame.pack(fill="x", padx=14, pady=4,
+                                before=self.form_model)
+        else:
+            self.sub_btn.configure(fg_color=C["sub"], text_color=C["bg"])
+            self.api_btn.configure(fg_color="#21262d", text_color=C["meta"])
+            self.key_frame.pack_forget()
+
+    def _toggle_key_vis(self):
+        self.form_key.configure(show="" if self.form_key.cget("show") == "•" else "•")
+
+    def _status(self, msg: str, error: bool = False):
         self._status_var.set(msg)
-        color = "#f85149" if error else C["sub"]
-        self.status_lbl.configure(text_color=color)
-        # Clear after 4 seconds
-        self.after(4000, lambda: self._status_var.set(""))
-
-    def _toggle_key_visibility(self):
-        current = self.key_entry.cget("show")
-        self.key_entry.configure(show="" if current == "•" else "•")
+        color = C["error"] if error else C["sub"]
+        for w in self.winfo_children():
+            if isinstance(w, ctk.CTkLabel) and w.cget("textvariable"):
+                w.configure(text_color=color)
+        self.after(3500, lambda: self._status_var.set(""))
 
     def _poll(self):
-        self._refresh_display()
-        self.after(1500, self._poll)
+        self._refresh()
+        self.after(2000, self._poll)
 
 
 if __name__ == "__main__":
-    SwitcherApp().mainloop()
+    AccountManager().mainloop()
