@@ -43,8 +43,9 @@ class AccountDialog(ctk.CTkToplevel):
     def __init__(self, parent, acc_id=None, acc=None, on_save=None):
         super().__init__(parent)
         self.title("Edit Account" if acc_id else "Add Account")
-        self.geometry("400x420")
-        self.resizable(False, True)
+        self.geometry("440x560")
+        self.minsize(380, 420)
+        self.resizable(True, True)
         self.attributes("-topmost", True)
         self.configure(fg_color=C["bg"])
         self.grab_set()
@@ -52,23 +53,29 @@ class AccountDialog(ctk.CTkToplevel):
         self._acc_id  = acc_id
         self._on_save = on_save
 
-        F_UI   = ctk.CTkFont(size=13)
-        F_SM   = ctk.CTkFont(size=11)
-        F_BOLD = ctk.CTkFont(size=12, weight="bold")
+        F_UI = ctk.CTkFont(size=13)
+        F_SM = ctk.CTkFont(size=11)
+
+        # Scrollable body so nothing ever gets cut off
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        scroll.grid(row=0, column=0, sticky="nsew")
+        scroll.grid_columnconfigure(0, weight=1)
 
         pad = {"padx": 20, "pady": 5}
 
         # Label
-        ctk.CTkLabel(self, text="Label", font=F_SM, text_color=C["meta"],
-                     anchor="w").pack(fill="x", padx=20, pady=(18, 0))
-        self.lbl_entry = ctk.CTkEntry(self, placeholder_text="e.g. Personal Sub, Work API",
+        ctk.CTkLabel(scroll, text="Label", font=F_SM, text_color=C["meta"],
+                     anchor="w").pack(fill="x", padx=20, pady=(14, 0))
+        self.lbl_entry = ctk.CTkEntry(scroll, placeholder_text="e.g. Personal Sub, Work API",
                                       height=34, font=F_UI)
         self.lbl_entry.pack(fill="x", **pad)
 
         # Mode toggle
-        ctk.CTkLabel(self, text="Auth Mode", font=F_SM, text_color=C["meta"],
+        ctk.CTkLabel(scroll, text="Auth Mode", font=F_SM, text_color=C["meta"],
                      anchor="w").pack(fill="x", padx=20, pady=(8, 0))
-        mode_row = ctk.CTkFrame(self, fg_color="transparent")
+        mode_row = ctk.CTkFrame(scroll, fg_color="transparent")
         mode_row.pack(fill="x", **pad)
         mode_row.grid_columnconfigure((0, 1), weight=1)
 
@@ -82,29 +89,35 @@ class AccountDialog(ctk.CTkToplevel):
                                       command=lambda: self._set_mode("api"))
         self.api_btn.grid(row=0, column=1, padx=(4, 0), sticky="ew")
 
-        # Subscription info box (shown in subscription mode)
-        self._sub_info = ctk.CTkFrame(self, fg_color="#1c2128", corner_radius=8)
+        # Subscription info box
+        self._sub_info = ctk.CTkFrame(scroll, fg_color="#1c2128", corner_radius=8)
         sub_text = (
-            "Subscription uses your Claude.ai login via the Claude Code CLI.\n\n"
-            "Authentication is handled in your terminal — not here.\n\n"
-            "To log in:  run  claude login  in a terminal.\n"
-            "To add a 2nd account:  claude login --profile work"
+            "Subscription uses your Claude.ai login (Google, email, etc.).\n\n"
+            "To authenticate, run this in your terminal:\n\n"
+            "   claude login\n\n"
+            "Your browser will open — sign in with Google or email,\n"
+            "exactly like claude.ai. ClaudeSwitch will use that session.\n\n"
+            "Have multiple Claude accounts? Add each one with:\n\n"
+            "   claude login --profile work\n"
+            "   claude login --profile personal\n\n"
+            "Then set the Profile field below to match."
         )
         ctk.CTkLabel(self._sub_info, text=sub_text, font=F_SM,
                      text_color=C["meta"], justify="left", anchor="w",
-                     wraplength=340).pack(padx=14, pady=12)
+                     wraplength=360).pack(padx=14, pady=12)
 
-        # Profile name (subscription only, optional)
-        self._profile_frame = ctk.CTkFrame(self, fg_color="transparent")
+        # Profile name (subscription only)
+        self._profile_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         ctk.CTkLabel(self._profile_frame, text="CLI Profile  (leave blank for default)",
                      font=F_SM, text_color=C["meta"], anchor="w").pack(fill="x")
-        self.profile_entry = ctk.CTkEntry(self._profile_frame,
-                                           placeholder_text="e.g. work  →  claude login --profile work",
-                                           height=34, font=F_UI)
+        self.profile_entry = ctk.CTkEntry(
+            self._profile_frame,
+            placeholder_text="e.g. work  →  matches  claude login --profile work",
+            height=34, font=F_UI)
         self.profile_entry.pack(fill="x", pady=(4, 0))
 
         # API key (api mode only)
-        self._key_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self._key_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         self._key_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(self._key_frame, text="Anthropic API Key",
                      font=F_SM, text_color=C["meta"], anchor="w").grid(
@@ -117,17 +130,17 @@ class AccountDialog(ctk.CTkToplevel):
                        command=self._toggle_vis).grid(row=1, column=1, pady=(4, 0))
 
         # Model
-        ctk.CTkLabel(self, text="Model", font=F_SM, text_color=C["meta"],
+        ctk.CTkLabel(scroll, text="Model", font=F_SM, text_color=C["meta"],
                      anchor="w").pack(fill="x", padx=20, pady=(10, 0))
-        self.model_menu = ctk.CTkOptionMenu(self, values=MODELS, height=32, font=F_SM,
+        self.model_menu = ctk.CTkOptionMenu(scroll, values=MODELS, height=32, font=F_SM,
                                              fg_color="#21262d", button_color="#30363d",
                                              dropdown_fg_color=C["card"])
         self.model_menu.set(MODELS[0])
         self.model_menu.pack(fill="x", **pad)
 
-        # Save / Cancel
-        btn_row = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row.pack(fill="x", padx=20, pady=(14, 16))
+        # Save / Cancel — fixed at bottom of window, outside scroll
+        btn_row = ctk.CTkFrame(self, fg_color=C["bg"])
+        btn_row.grid(row=1, column=0, sticky="ew", padx=20, pady=(6, 14))
         btn_row.grid_columnconfigure((0, 1), weight=1)
         ctk.CTkButton(btn_row, text="Save Account", height=36, font=F_UI,
                        command=self._save).grid(row=0, column=0, padx=(0, 6), sticky="ew")
