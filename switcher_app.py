@@ -3,9 +3,258 @@ ClaudeSwitch — Account Manager
 Manage multiple accounts and switch between them seamlessly.
 Launched via the ⚙ button in the main client, or: python switcher_app.py
 """
+import os
+import pty
+import re
+import select
+import shutil
+import subprocess
+import sys
+import threading
 import tkinter as tk
 from tkinter import messagebox
+from pathlib import Path
 import customtkinter as ctk
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\r')
+_URL_RE   = re.compile(r'https?://\S+')
+
+# Each profile gets its own isolated Claude config directory
+_PROFILES_DIR = Path.home() / ".claude_client" / "profiles"
+
+
+def _run_claude_login(parent, profile: str = ""):
+    """Run claude auth login with an embedded webview — no browser, no code pasting."""
+    claude = shutil.which("claude")
+    if not claude:
+        messagebox.showerror(
+            "Claude CLI not found",
+            "The 'claude' command was not found in your PATH.\n\n"
+            "Install Claude Code first:\n  npm install -g @anthropic-ai/claude-code",
+        )
+        return
+
+    cmd = [claude, "auth", "login"]
+    env = dict(os.environ)
+    env["BROWSER"] = "/bin/true"          # stop claude from opening its own browser
+    if profile:
+        profile_dir = _PROFILES_DIR / profile
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        env["CLAUDE_CONFIG_DIR"] = str(profile_dir)
+
+    # ── Simple status dialog (no code field — webview handles everything) ─────
+    dlg = ctk.CTkToplevel(parent)
+    dlg.title("Sign in to Claude")
+    dlg.geometry("400x340")
+    dlg.resizable(False, False)
+    dlg.attributes("-topmost", True)
+    dlg.configure(fg_color="#0d1117")
+    dlg.grab_set()
+
+    F_TITLE = ctk.CTkFont(size=14, weight="bold")
+    F_BODY  = ctk.CTkFont(size=12)
+    F_SM    = ctk.CTkFont(size=11)
+
+    ctk.CTkLabel(dlg, text="Sign in to Claude", font=F_TITLE,
+                 text_color="#e6edf3").pack(pady=(18, 4))
+    status_var = tk.StringVar(value="Opening private browser window…")
+    ctk.CTkLabel(dlg, textvariable=status_var, font=F_BODY,
+                 text_color="#8b949e", wraplength=340,
+                 justify="left").pack(pady=(0, 6), padx=20, anchor="w")
+
+    # Code paste area — shown once the private browser is open
+    code_frame = ctk.CTkFrame(dlg, fg_color="transparent")
+    code_entry = ctk.CTkEntry(code_frame, height=34, font=F_BODY,
+                               placeholder_text="Paste code here…")
+    code_entry.pack(fill="x", padx=0, pady=(0, 4))
+
+    code_ready = threading.Event()
+    cancel_ev  = threading.Event()
+    procs      = []
+
+    def _submit():
+        code_ready.set()
+
+    ctk.CTkButton(code_frame, text="Submit Code", height=30, font=F_BODY,
+                  command=_submit).pack(fill="x")
+    code_entry.bind("<Return>", lambda _: _submit())
+
+    def _cancel():
+        cancel_ev.set()
+        code_ready.set()
+        for p in procs:
+            try: p.terminate()
+            except Exception: pass
+        try: dlg.destroy()
+        except Exception: pass
+
+    ctk.CTkButton(dlg, text="Cancel", height=28, font=F_SM,
+                  fg_color="#21262d", hover_color="#30363d",
+                  command=_cancel).pack(pady=(8, 12))
+
+    def _bg():
+        import time
+
+        # ── Step 1: start claude auth login, capture the OAuth URL ────────────
+        master_fd, slave_fd = pty.openpty()
+        try:
+            auth_proc = subprocess.Popen(
+                cmd,
+                stdout=slave_fd, stderr=slave_fd,
+                stdin=subprocess.PIPE,
+                env=env, close_fds=True,
+            )
+            procs.append(auth_proc)
+            os.close(slave_fd)
+        except Exception as e:
+            try: os.close(slave_fd)
+            except OSError: pass
+            try: os.close(master_fd)
+            except OSError: pass
+            parent.after(0, lambda: status_var.set(f"Error: {e}"))
+            return
+
+        buf = ""
+        auth_url = None
+        t0 = time.time()
+        while not cancel_ev.is_set() and time.time() - t0 < 15:
+            try:
+                r, _, _ = select.select([master_fd], [], [], 0.1)
+            except (ValueError, OSError):
+                break
+            if r:
+                try:
+                    buf += _ANSI_RE.sub(
+                        "", os.read(master_fd, 512).decode("utf-8", errors="replace"))
+                    m = _URL_RE.search(buf)
+                    if m:
+                        auth_url = m.group(0).rstrip(".,;)")
+                        break
+                except OSError:
+                    break
+            if auth_proc.poll() is not None:
+                break
+
+        if cancel_ev.is_set() or not auth_url:
+            try: os.close(master_fd)
+            except OSError: pass
+            if not cancel_ev.is_set():
+                parent.after(0, lambda: status_var.set(
+                    "Could not start sign-in. Close this and try again."))
+            else:
+                auth_proc.terminate()
+            return
+
+        # ── Step 2: try embedded WebKit browser first ─────────────────────────
+        webview_script = Path(__file__).parent / "webview_login.py"
+        use_webview    = webview_script.exists()
+        auth_code      = None
+
+        if use_webview and not cancel_ev.is_set():
+            parent.after(0, lambda: status_var.set(
+                "Sign in in the window that just opened…\n"
+                "(Close the sign-in window to cancel)"
+            ))
+            try:
+                wv_proc = subprocess.Popen(
+                    [sys.executable, str(webview_script), auth_url],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                procs.append(wv_proc)
+                code_line = wv_proc.stdout.readline()
+                wv_proc.wait()
+                auth_code = code_line.decode("utf-8", errors="replace").strip() or None
+            except Exception:
+                auth_code    = None
+                use_webview  = False  # WebKit unavailable — fall through to Firefox
+
+            if use_webview and not auth_code and not cancel_ev.is_set():
+                # User closed the webview without completing sign-in
+                try: os.close(master_fd)
+                except OSError: pass
+                auth_proc.terminate()
+                parent.after(0, lambda: status_var.set("Sign-in cancelled."))
+                return
+
+        # ── Fallback: Firefox private window + manual code paste ──────────────
+        if not auth_code and not cancel_ev.is_set():
+            firefox = shutil.which("firefox") or shutil.which("firefox-esr")
+            if firefox:
+                subprocess.Popen([firefox, "--private-window", auth_url])
+            else:
+                subprocess.Popen(["xdg-open", auth_url])
+
+            parent.after(0, lambda: (
+                status_var.set(
+                    "1. Sign in with Google or Apple in the\n"
+                    "   private Firefox window that just opened.\n\n"
+                    "2. After signing in, copy the code shown\n"
+                    "   and paste it below, then click Submit."
+                ),
+                code_frame.pack(fill="x", padx=20, pady=(4, 0)),
+                code_entry.focus_set(),
+            ))
+
+            code_ready.wait()
+            if cancel_ev.is_set():
+                try: os.close(master_fd)
+                except OSError: pass
+                auth_proc.terminate()
+                return
+
+            auth_code = code_entry.get().strip()
+            if not auth_code:
+                try: os.close(master_fd)
+                except OSError: pass
+                parent.after(0, lambda: status_var.set("No code entered. Close this and try again."))
+                return
+
+        if not auth_code or cancel_ev.is_set():
+            try: os.close(master_fd)
+            except OSError: pass
+            auth_proc.terminate()
+            return
+
+        # ── Step 4: send code to claude auth login ────────────────────────────
+        parent.after(0, lambda: (
+            status_var.set("Verifying…"),
+            code_frame.pack_forget(),
+        ))
+        try:
+            auth_proc.stdin.write((auth_code + "\n").encode())
+            auth_proc.stdin.flush()
+        except Exception:
+            pass
+
+        while not cancel_ev.is_set():
+            try:
+                r, _, _ = select.select([master_fd], [], [], 0.1)
+            except (ValueError, OSError):
+                break
+            if r:
+                try: os.read(master_fd, 512)
+                except OSError: break
+            elif auth_proc.poll() is not None:
+                break
+
+        try: os.close(master_fd)
+        except OSError: pass
+
+        if cancel_ev.is_set():
+            auth_proc.terminate()
+            return
+
+        if auth_proc.wait() == 0:
+            def _done():
+                status_var.set("✓ Signed in! Click Save Account to finish.")
+                dlg.after(2500, dlg.destroy)
+            parent.after(0, _done)
+        else:
+            parent.after(0, lambda: status_var.set(
+                "Sign-in failed — wrong code or timed out.\nClose this and try again."))
+
+    threading.Thread(target=_bg, daemon=True).start()
 
 from config_manager import (
     load,
@@ -89,42 +338,31 @@ class AccountDialog(ctk.CTkToplevel):
                                       command=lambda: self._set_mode("api"))
         self.api_btn.grid(row=0, column=1, padx=(4, 0), sticky="ew")
 
-        # Subscription info box
+        # Subscription sign-in box
         self._sub_info = ctk.CTkFrame(scroll, fg_color="#1c2128", corner_radius=8)
-        sub_text = (
-            "Subscription uses your Claude.ai login.\n"
-            "Supports: Google, Apple ID, or email.\n\n"
-            "Run once in your terminal:\n\n"
-            "   claude login\n\n"
-            "Your browser opens → choose  Sign in with Google,\n"
-            "Sign in with Apple, or email — exactly like claude.ai.\n\n"
-            "Multiple accounts? Run once per account:\n\n"
-            "   claude login --profile work\n"
-            "   claude login --profile personal\n\n"
-            "Then set the Profile field below to match."
-        )
-        ctk.CTkLabel(self._sub_info, text=sub_text, font=F_SM,
-                     text_color=C["meta"], justify="left", anchor="w",
-                     wraplength=360).pack(padx=14, pady=12)
+        ctk.CTkLabel(self._sub_info,
+                     text="Sign in with your Claude.ai account.\nSupports Google, Apple ID, and email.",
+                     font=F_SM, text_color=C["meta"], justify="left", anchor="w",
+                     wraplength=360).pack(padx=14, pady=(12, 8))
         btn_row_sub = ctk.CTkFrame(self._sub_info, fg_color="transparent")
         btn_row_sub.pack(fill="x", padx=14, pady=(0, 12))
         btn_row_sub.grid_columnconfigure((0, 1), weight=1)
-        ctk.CTkButton(btn_row_sub, text="🔵  Google", height=28, font=F_SM,
+        ctk.CTkButton(btn_row_sub, text="🔵  Sign in with Google", height=32, font=F_SM,
                        fg_color="#1f6feb", hover_color="#1a5cb0", text_color="#fff",
-                       command=lambda: __import__("subprocess").Popen(["claude", "login"])
+                       command=lambda: _run_claude_login(self, self.profile_entry.get().strip())
                        ).grid(row=0, column=0, padx=(0, 4), sticky="ew")
-        ctk.CTkButton(btn_row_sub, text="  Apple ID", height=28, font=F_SM,
+        ctk.CTkButton(btn_row_sub, text="  Sign in with Apple", height=32, font=F_SM,
                        fg_color="#21262d", hover_color="#30363d", text_color="#e6edf3",
-                       command=lambda: __import__("subprocess").Popen(["claude", "login"])
+                       command=lambda: _run_claude_login(self, self.profile_entry.get().strip())
                        ).grid(row=0, column=1, padx=(4, 0), sticky="ew")
 
-        # Profile name (subscription only)
+        # Profile name — optional, used to keep multiple accounts separate
         self._profile_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-        ctk.CTkLabel(self._profile_frame, text="CLI Profile  (leave blank for default)",
+        ctk.CTkLabel(self._profile_frame, text="Account nickname  (optional — for multiple accounts)",
                      font=F_SM, text_color=C["meta"], anchor="w").pack(fill="x")
         self.profile_entry = ctk.CTkEntry(
             self._profile_frame,
-            placeholder_text="e.g. work  →  matches  claude login --profile work",
+            placeholder_text="e.g. work, personal  — leave blank for your main account",
             height=34, font=F_UI)
         self.profile_entry.pack(fill="x", pady=(4, 0))
 

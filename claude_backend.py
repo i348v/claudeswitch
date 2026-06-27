@@ -5,8 +5,11 @@ import select
 import shutil
 import subprocess
 import threading
+from pathlib import Path
 import anthropic
 from config_manager import get_active
+
+_PROFILES_DIR = Path.home() / ".claude_client" / "profiles"
 
 # Strip ANSI colour / cursor codes that the CLI emits when connected to a TTY
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\r')
@@ -43,22 +46,32 @@ def _api(messages, acc, on_chunk, stop_event, system_prompt="", on_usage=None):
         kwargs["system"] = system_prompt
 
     full = ""
-    with client.messages.stream(**kwargs) as stream:
-        for text in stream.text_stream:
-            if stop_event and stop_event.is_set():
-                break
-            full += text
-            if on_chunk:
-                on_chunk(text)
-        # Capture token usage after stream completes
-        if on_usage:
-            try:
-                usage = stream.get_final_message().usage
-                on_usage({"input_tokens": usage.input_tokens,
-                           "output_tokens": usage.output_tokens,
-                           "model": model})
-            except Exception:
-                pass
+    try:
+        with client.messages.stream(**kwargs) as stream:
+            for text in stream.text_stream:
+                if stop_event and stop_event.is_set():
+                    break
+                full += text
+                if on_chunk:
+                    on_chunk(text)
+            if on_usage:
+                try:
+                    usage = stream.get_final_message().usage
+                    on_usage({"input_tokens": usage.input_tokens,
+                               "output_tokens": usage.output_tokens,
+                               "model": model})
+                except Exception:
+                    pass
+    except anthropic.AuthenticationError:
+        raise RuntimeError(
+            "Authentication failed — the API key is invalid or expired. "
+            "Check the key in Account Manager."
+        )
+    except anthropic.PermissionDeniedError:
+        raise RuntimeError(
+            f"Permission denied for model '{model}'. "
+            "Your API key may not have access to this model — check your Anthropic account tier."
+        )
     return full
 
 
@@ -99,8 +112,12 @@ def _subscription(messages, acc, on_chunk, stop_event: threading.Event = None,
     if system_prompt:
         prompt = f"<system>\n{system_prompt}\n</system>\n\n{prompt}"
     cmd = [claude_bin, "-p", prompt, "--model", acc.get("model", "claude-sonnet-4-6")]
+
+    # Each profile is isolated via its own CLAUDE_CONFIG_DIR
+    env = dict(os.environ)
     if acc.get("profile"):
-        cmd += ["--profile", acc["profile"]]
+        profile_dir = _PROFILES_DIR / acc["profile"]
+        env["CLAUDE_CONFIG_DIR"] = str(profile_dir)
 
     # Open a pseudo-TTY so the Node CLI streams output instead of buffering it
     master_fd, slave_fd = pty.openpty()
@@ -108,6 +125,7 @@ def _subscription(messages, acc, on_chunk, stop_event: threading.Event = None,
         cmd,
         stdout=slave_fd,
         stderr=subprocess.DEVNULL,
+        env=env,
         close_fds=True,
     )
     os.close(slave_fd)  # parent doesn't need the slave end
