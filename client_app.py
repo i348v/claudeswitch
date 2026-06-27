@@ -769,30 +769,43 @@ class ChatApp(ctk.CTk):
         self.md = MarkdownRenderer(self.chat)
 
         # ── Input bar ──
-        inp_bar = ctk.CTkFrame(main, height=98, corner_radius=0, fg_color=C["sidebar"])
+        inp_bar = ctk.CTkFrame(main, corner_radius=0, fg_color=C["sidebar"])
         inp_bar.grid(row=2, column=0, sticky="ew")
         inp_bar.grid_columnconfigure(0, weight=1)
-        inp_bar.grid_propagate(False)
 
+        # Attachment tray (hidden until files are added)
+        self._attach_tray = ctk.CTkFrame(inp_bar, fg_color="transparent")
+        self._attach_tray.grid(row=0, column=0, columnspan=2, sticky="ew", padx=14, pady=(8, 0))
+        self._attach_tray.grid_remove()
+
+        # Text input row
         self.inp = ctk.CTkTextbox(inp_bar, height=62, font=self.F_UI, wrap="word")
-        self.inp.grid(row=0, column=0, padx=(14, 6), pady=14, sticky="ew")
+        self.inp.grid(row=1, column=0, padx=(14, 6), pady=10, sticky="ew")
         self.inp.bind("<Return>",       self._on_enter)
         self.inp.bind("<Shift-Return>", lambda e: None)
 
         btn_box = ctk.CTkFrame(inp_bar, fg_color="transparent")
-        btn_box.grid(row=0, column=1, padx=(0, 14), pady=14, sticky="ns")
+        btn_box.grid(row=1, column=1, padx=(0, 14), pady=10, sticky="ns")
 
         self.send_btn = ctk.CTkButton(
             btn_box, text="Send", width=90, height=28,
             font=self.F_UI, command=self._send,
         )
-        self.send_btn.pack(pady=(4, 4))
+        self.send_btn.pack(pady=(2, 3))
 
         ctk.CTkButton(
-            btn_box, text="📎 Artifact", width=90, height=28,
+            btn_box, text="📎  Attach", width=90, height=28,
+            font=self.F_SM, fg_color="#21262d", hover_color="#30363d",
+            text_color="#adbac7", command=self._pick_attachment,
+        ).pack(pady=(0, 3))
+
+        ctk.CTkButton(
+            btn_box, text="🖼  Artifact", width=90, height=28,
             font=self.F_SM, fg_color="#21262d", hover_color="#30363d",
             text_color="#adbac7", command=self._export_artifact,
         ).pack()
+
+        self._attachments: list[dict] = []  # [{name, kind, data, media_type}]
 
     # ── Account menu ───────────────────────────────────────────────────────────
 
@@ -1039,6 +1052,86 @@ class ChatApp(ctk.CTk):
         self.chat.configure(state=tk.DISABLED)
         self._set_loading(False)
 
+    # ── File attachments ───────────────────────────────────────────────────────
+
+    def _pick_attachment(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="Attach a file",
+            filetypes=[
+                ("Supported files", "*.png *.jpg *.jpeg *.gif *.webp *.pdf *.txt *.md *.py *.js *.ts *.json *.csv *.html *.css *.xml"),
+                ("Images",          "*.png *.jpg *.jpeg *.gif *.webp"),
+                ("Documents",       "*.pdf *.txt *.md"),
+                ("Code",            "*.py *.js *.ts *.json *.csv *.html *.css *.xml"),
+                ("All files",       "*.*"),
+            ],
+        )
+        if path:
+            self._add_attachment(path)
+
+    def _add_attachment(self, path: str):
+        import base64, mimetypes
+        from pathlib import Path
+        p = Path(path)
+        ext = p.suffix.lower()
+        name = p.name
+
+        IMAGE_EXTS = {".png": "image/png", ".jpg": "image/jpeg",
+                      ".jpeg": "image/jpeg", ".gif": "image/gif",
+                      ".webp": "image/webp"}
+
+        if ext in IMAGE_EXTS:
+            data = base64.standard_b64encode(p.read_bytes()).decode()
+            att = {"name": name, "kind": "image", "data": data,
+                   "media_type": IMAGE_EXTS[ext]}
+        elif ext == ".pdf":
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(str(p))
+                text = "\n".join(page.extract_text() or "" for page in reader.pages)
+            except Exception:
+                text = f"[Could not extract text from {name}]"
+            att = {"name": name, "kind": "text", "data": text, "media_type": "text/plain"}
+        else:
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                text = f"[Could not read {name}]"
+            att = {"name": name, "kind": "text", "data": text, "media_type": "text/plain"}
+
+        self._attachments.append(att)
+        self._rebuild_attach_tray()
+
+    def _rebuild_attach_tray(self):
+        for w in self._attach_tray.winfo_children():
+            w.destroy()
+
+        if not self._attachments:
+            self._attach_tray.grid_remove()
+            return
+
+        self._attach_tray.grid()
+        for i, att in enumerate(self._attachments):
+            icon = "🖼" if att["kind"] == "image" else "📄"
+            chip = ctk.CTkFrame(self._attach_tray, fg_color=C["border"], corner_radius=6)
+            chip.pack(side="left", padx=(0, 4), pady=2)
+            ctk.CTkLabel(chip, text=f"{icon} {att['name'][:24]}",
+                         font=self.F_SM, text_color="#e6edf3").pack(side="left", padx=(8, 2), pady=4)
+            ctk.CTkButton(chip, text="✕", width=20, height=20,
+                          fg_color="transparent", hover_color="#6e1313",
+                          font=self.F_SM, text_color=C["meta"],
+                          command=lambda idx=i: self._remove_attachment(idx),
+                          ).pack(side="left", padx=(0, 4))
+
+    def _remove_attachment(self, idx: int):
+        if 0 <= idx < len(self._attachments):
+            self._attachments.pop(idx)
+        self._rebuild_attach_tray()
+
+    def _clear_attachments(self):
+        self._attachments.clear()
+        self._rebuild_attach_tray()
+
     # ── Send / stop ────────────────────────────────────────────────────────────
 
     def _on_enter(self, event):
@@ -1051,11 +1144,14 @@ class ChatApp(ctk.CTk):
         if self.is_loading:
             return
         text = self.inp.get("1.0", tk.END).strip()
-        if not text:
+        attachments = list(self._attachments)
+        if not text and not attachments:
             return
 
         self.inp.delete("1.0", tk.END)
+        self._clear_attachments()
         acc = get_active()
+        cfg = load_cfg()
 
         # Handoff: prepend context summary so the new account is caught up
         if self._inject_handoff and self.messages:
@@ -1063,18 +1159,50 @@ class ChatApp(ctk.CTk):
                 f"{'Human' if m['role'] == 'user' else 'Assistant'}: {m['content'][:300]}"
                 for m in self.messages[-6:]
             )
-            text = (
-                f"[Account switch. Conversation so far:\n{history}\n]\n\n{text}"
-            )
+            text = f"[Account switch. Conversation so far:\n{history}\n]\n\n{text}"
             self._inject_handoff = False
 
-        add_message(self.current_conv_id, "user", text, acc["mode"])
-        self.messages.append({"role": "user", "content": text})
+        # Build display text and API content
+        display_text = text
+        if attachments:
+            names = ", ".join(a["name"] for a in attachments)
+            display_text = f"[{names}]\n{text}" if text else f"[{names}]"
+
+        # Build content for API (multimodal if images, text-prepend otherwise)
+        if attachments and acc["mode"] == "api":
+            content: list | str = []
+            for att in attachments:
+                if att["kind"] == "image":
+                    content.append({"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": att["media_type"],
+                        "data": att["data"],
+                    }})
+                else:
+                    content.append({"type": "text",
+                                    "text": f"[File: {att['name']}]\n{att['data']}"})
+            if text:
+                content.append({"type": "text", "text": text})
+        elif attachments:
+            # Subscription mode: prepend text content (images described)
+            parts = []
+            for att in attachments:
+                if att["kind"] == "image":
+                    parts.append(f"[Image attached: {att['name']} — image data not available in CLI mode]")
+                else:
+                    parts.append(f"[File: {att['name']}]\n{att['data']}")
+            content = "\n\n".join(parts) + (f"\n\n{text}" if text else "")
+        else:
+            content = text
+
+        stored_text = display_text if isinstance(content, list) else content
+        add_message(self.current_conv_id, "user", stored_text, acc["mode"])
+        self.messages.append({"role": "user", "content": content})
 
         self.chat.configure(state=tk.NORMAL)
         self._write_user_header()
-        self.chat.insert(tk.END, f"  {text}\n", "user_body")
-        self._write_asst_header(cfg["mode"])
+        self.chat.insert(tk.END, f"  {display_text}\n", "user_body")
+        self._write_asst_header(acc["mode"])
         self._begin_stream()
 
         self._set_loading(True)
