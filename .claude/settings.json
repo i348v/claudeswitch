@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(scrot *)",
+      "Bash(xdotool search *)",
+      "Bash(xdotool getwindowgeometry *)",
+      "Bash(xdotool windowraise *)",
+      "Bash(xdotool windowfocus *)",
+      "Bash(xdotool mousemove *)",
+      "Bash(xdotool type *)",
+      "Bash(xdotool key *)",
+      "Bash(xdpyinfo *)",
+      "Bash(xrandr *)",
+      "Bash(pkill -f client_app.py)",
+      "Bash(pkill -f switcher_app.py)"
+    ]
+  }
+}

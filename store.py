@@ -219,6 +219,17 @@ def delete_conversation(conv_id):
     con.close()
 
 
+def delete_empty_conversations():
+    """Remove conversations that were created but never received a message."""
+    con = _conn()
+    con.execute("""
+        DELETE FROM conversations
+        WHERE id NOT IN (SELECT DISTINCT conversation_id FROM messages)
+    """)
+    con.commit()
+    con.close()
+
+
 def import_from_claudeai(path: str) -> tuple[int, int]:
     """
     Import conversations from a Claude.ai data export.

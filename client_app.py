@@ -25,6 +25,7 @@ from store import (
     create_conversation,
     create_project,
     delete_conversation,
+    delete_empty_conversations,
     delete_project,
     get_conversations, search_conversations,
     get_messages,
@@ -746,6 +747,7 @@ class ChatApp(ctk.CTk):
         self.F_MONO = ctk.CTkFont(family=MONO[0], size=MONO[1])
 
         init_db()
+        delete_empty_conversations()
         self._build_ui()
         self._refresh_projects()
         self._refresh_sidebar()
@@ -1194,7 +1196,7 @@ class ChatApp(ctk.CTk):
     # ── Conversation ops ───────────────────────────────────────────────────────
 
     def _new_conv(self):
-        self.current_conv_id = create_conversation(project_id=self._active_project_id)
+        self.current_conv_id = None  # created lazily on first send
         self.messages = []
         self._clear_chat()
         self.title_lbl.configure(text="New Conversation")
@@ -1226,7 +1228,7 @@ class ChatApp(ctk.CTk):
         self._refresh_sidebar()
 
     def _delete_conv(self):
-        if not self.current_conv_id:
+        if not self.current_conv_id or not self.messages:
             return
         if not messagebox.askyesno("Delete", "Delete this conversation? This cannot be undone."):
             return
@@ -1501,6 +1503,9 @@ class ChatApp(ctk.CTk):
             content = "\n\n".join(parts) + (f"\n\n{text}" if text else "")
         else:
             content = text
+
+        if self.current_conv_id is None:
+            self.current_conv_id = create_conversation(project_id=self._active_project_id)
 
         stored_text = display_text if isinstance(content, list) else content
         add_message(self.current_conv_id, "user", stored_text, acc["mode"],
