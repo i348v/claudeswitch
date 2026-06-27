@@ -200,6 +200,194 @@ class MarkdownRenderer:
         w.insert(tk.END, "\n\n")
 
 
+# ── Import wizard ──────────────────────────────────────────────────────────────
+
+class ImportWizard(ctk.CTkToplevel):
+    """
+    Step-by-step guide that:
+    1. Opens Claude.ai export page in browser
+    2. Collects email + password, connects via IMAP
+    3. Watches inbox for the Anthropic export email
+    4. Downloads the file and imports automatically
+    """
+
+    def __init__(self, parent, on_import_done=None):
+        super().__init__(parent)
+        self.title("Import from Claude.ai")
+        self.geometry("440x480")
+        self.resizable(False, True)
+        self.attributes("-topmost", True)
+        self.configure(fg_color=C["bg"])
+        self.grab_set()
+
+        self._on_import_done = on_import_done
+        self._stop_event     = threading.Event()
+        self._status_var     = tk.StringVar(value="")
+
+        F_BOLD = ctk.CTkFont(size=13, weight="bold")
+        F_UI   = ctk.CTkFont(size=13)
+        F_SM   = ctk.CTkFont(size=11)
+
+        # ── Step 1 banner ──
+        step1 = ctk.CTkFrame(self, fg_color="#1c2128", corner_radius=10)
+        step1.pack(fill="x", padx=20, pady=(20, 6))
+        ctk.CTkLabel(step1, text="Step 1 — Request your data from Claude.ai",
+                     font=F_BOLD, text_color="#e6edf3", anchor="w").pack(
+                         padx=14, pady=(12, 2), anchor="w")
+        ctk.CTkLabel(
+            step1,
+            text="Click the button below. On Claude.ai go to:\n"
+                 "Settings › Privacy › Export Data  →  click 'Export'\n"
+                 "Anthropic will email you a download link.",
+            font=F_SM, text_color=C["meta"], justify="left", anchor="w",
+            wraplength=370,
+        ).pack(padx=14, pady=(0, 8), anchor="w")
+        ctk.CTkButton(step1, text="Open Claude.ai Export Page →",
+                      height=32, font=F_UI,
+                      command=lambda: __import__("webbrowser").open(
+                          "https://claude.ai/settings/privacy")
+                      ).pack(padx=14, pady=(0, 12), fill="x")
+
+        # ── Step 2 banner ──
+        step2 = ctk.CTkFrame(self, fg_color="#1c2128", corner_radius=10)
+        step2.pack(fill="x", padx=20, pady=6)
+        ctk.CTkLabel(step2, text="Step 2 — Let ClaudeSwitch fetch it from your inbox",
+                     font=F_BOLD, text_color="#e6edf3", anchor="w").pack(
+                         padx=14, pady=(12, 2), anchor="w")
+        ctk.CTkLabel(
+            step2,
+            text="Enter the email address on your Claude.ai account.\n"
+                 "Gmail: use an App Password (myaccount.google.com › Security › App Passwords)\n"
+                 "Outlook / Yahoo / iCloud: use your regular password.",
+            font=F_SM, text_color=C["meta"], justify="left", anchor="w",
+            wraplength=370,
+        ).pack(padx=14, pady=(0, 6), anchor="w")
+
+        self._email_entry = ctk.CTkEntry(step2, placeholder_text="you@gmail.com",
+                                          height=34, font=F_UI)
+        self._email_entry.pack(fill="x", padx=14, pady=(0, 4))
+
+        pw_row = ctk.CTkFrame(step2, fg_color="transparent")
+        pw_row.pack(fill="x", padx=14, pady=(0, 12))
+        pw_row.grid_columnconfigure(0, weight=1)
+        self._pw_entry = ctk.CTkEntry(pw_row, placeholder_text="Password / App Password",
+                                       show="•", height=34, font=F_UI)
+        self._pw_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(pw_row, text="👁", width=34, height=34,
+                       fg_color="#21262d", hover_color="#30363d",
+                       command=self._toggle_pw).grid(row=0, column=1)
+
+        # ── Buttons ──
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=(10, 4))
+        btn_row.grid_columnconfigure((0, 1), weight=1)
+
+        self._watch_btn = ctk.CTkButton(
+            btn_row, text="▶  Watch My Inbox", height=36, font=F_UI,
+            command=self._start_watch,
+        )
+        self._watch_btn.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+
+        ctk.CTkButton(
+            btn_row, text="📂  Choose File Manually", height=36, font=F_UI,
+            fg_color="#21262d", hover_color="#30363d",
+            command=self._manual,
+        ).grid(row=0, column=1, padx=(6, 0), sticky="ew")
+
+        # ── Status ──
+        self._status_lbl = ctk.CTkLabel(
+            self, textvariable=self._status_var,
+            font=F_SM, text_color=C["meta"], wraplength=400,
+        )
+        self._status_lbl.pack(padx=20, pady=(4, 16))
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _toggle_pw(self):
+        self._pw_entry.configure(
+            show="" if self._pw_entry.cget("show") == "•" else "•"
+        )
+
+    def _set_status(self, msg: str, color: str = C["meta"]):
+        self._status_var.set(msg)
+        self._status_lbl.configure(text_color=color)
+
+    def _start_watch(self):
+        from email_watcher import watch
+
+        addr = self._email_entry.get().strip()
+        pw   = self._pw_entry.get().strip()
+        if not addr or not pw:
+            self._set_status("⚠  Enter your email and password first.", C["error"])
+            return
+
+        self._stop_event.clear()
+        self._watch_btn.configure(text="■  Stop Watching", fg_color="#b91c1c",
+                                   command=self._stop_watch)
+        self._set_status("Connecting…", C["meta"])
+
+        threading.Thread(
+            target=watch,
+            kwargs=dict(
+                email_addr=addr,
+                password=pw,
+                on_status=lambda m: self.after(0, lambda: self._set_status(m)),
+                on_found=self._on_found,
+                on_error=lambda m: self.after(0, lambda: self._on_error(m)),
+                stop_event=self._stop_event,
+            ),
+            daemon=True,
+        ).start()
+
+    def _stop_watch(self):
+        self._stop_event.set()
+        self._watch_btn.configure(text="▶  Watch My Inbox", fg_color=["#1f538d","#1f538d"],
+                                   command=self._start_watch)
+        self._set_status("Stopped.")
+
+    def _on_found(self, path: str):
+        from store import import_from_claudeai
+        self.after(0, lambda: self._set_status("Importing conversations…", C["asst_acc"]))
+        try:
+            convs, msgs = import_from_claudeai(path)
+            self.after(0, lambda: self._finish(convs, msgs))
+        except Exception as exc:
+            self.after(0, lambda: self._on_error(str(exc)))
+
+    def _finish(self, convs: int, msgs: int):
+        self._set_status(
+            f"✓  Done — {convs} conversations, {msgs} messages imported.", C["asst_acc"]
+        )
+        self._watch_btn.configure(state="disabled")
+        if self._on_import_done:
+            self._on_import_done(convs, msgs)
+        self.after(2500, self.destroy)
+
+    def _on_error(self, msg: str):
+        self._set_status(f"⚠  {msg}", C["error"])
+        self._watch_btn.configure(text="▶  Watch My Inbox", fg_color=["#1f538d","#1f538d"],
+                                   command=self._start_watch)
+
+    def _manual(self):
+        from tkinter import filedialog
+        from store import import_from_claudeai
+        path = filedialog.askopenfilename(
+            title="Select Claude.ai export",
+            filetypes=[("Claude.ai export", "*.json *.zip"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            convs, msgs = import_from_claudeai(path)
+            self._finish(convs, msgs)
+        except Exception as exc:
+            self._on_error(str(exc))
+
+    def _on_close(self):
+        self._stop_event.set()
+        self.destroy()
+
+
 # ── Main app ───────────────────────────────────────────────────────────────────
 
 class ChatApp(ctk.CTk):
@@ -700,68 +888,14 @@ class ChatApp(ctk.CTk):
         subprocess.Popen([sys.executable, str(switcher)], close_fds=True)
 
     def _start_claudeai_import(self):
-        """Open Claude.ai export page in browser, then watch Downloads for the zip."""
-        import webbrowser
-        import os, glob, threading
-        from pathlib import Path
-        from store import import_from_claudeai
+        ImportWizard(self, on_import_done=self._on_import_done)
 
-        # Open the export page directly
-        webbrowser.open("https://claude.ai/settings/privacy")
-
-        downloads = Path.home() / "Downloads"
+    def _on_import_done(self, convs: int, msgs: int):
+        self._refresh_sidebar()
         self._write_system_notice(
-            "Browser opened → Claude.ai › Settings › Privacy › Export Data.\n"
-            "  Click 'Export Data', download the zip — it will import automatically."
+            f"✓ Imported {convs} conversation{'s' if convs != 1 else ''} "
+            f"and {msgs} message{'s' if msgs != 1 else ''} from Claude.ai."
         )
-
-        # Snapshot existing zips so we only react to new ones
-        existing = set(glob.glob(str(downloads / "*.zip")) +
-                       glob.glob(str(downloads / "*.json")))
-
-        def watch():
-            import time
-            deadline = time.time() + 300  # watch for 5 minutes
-            while time.time() < deadline:
-                time.sleep(3)
-                candidates = set(glob.glob(str(downloads / "*.zip")) +
-                                 glob.glob(str(downloads / "*.json")))
-                new_files = candidates - existing
-                for f in new_files:
-                    # Only pick up Claude-looking exports
-                    name = os.path.basename(f).lower()
-                    if any(k in name for k in ("claude", "conversation", "export")):
-                        try:
-                            convs, msgs = import_from_claudeai(f)
-                            self.rq.put({
-                                "type": "import_done",
-                                "convs": convs, "msgs": msgs, "file": f,
-                            })
-                            return
-                        except Exception:
-                            existing.add(f)  # bad file, ignore it
-                    existing.add(f)  # not a Claude file, stop watching it
-
-        threading.Thread(target=watch, daemon=True).start()
-
-    def _import_claudeai(self):
-        """Manual fallback — file picker."""
-        from tkinter import filedialog
-        from store import import_from_claudeai
-
-        path = filedialog.askopenfilename(
-            title="Select Claude.ai export file",
-            filetypes=[("Claude.ai export", "*.json *.zip"), ("All files", "*.*")],
-        )
-        if not path:
-            return
-        try:
-            convs, msgs = import_from_claudeai(path)
-            self._refresh_sidebar()
-            messagebox.showinfo("Import complete",
-                f"Imported {convs} conversations and {msgs} messages.")
-        except Exception as exc:
-            messagebox.showerror("Import failed", str(exc))
 
 
 if __name__ == "__main__":
