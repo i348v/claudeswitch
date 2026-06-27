@@ -205,6 +205,7 @@ class AccountManager(ctk.CTk):
         self.F_SM   = ctk.CTkFont(size=11)
 
         self._status_var = tk.StringVar()
+        self._last_mtime  = 0.0   # only redraw when config changes
         self._build_ui()
         self._refresh()
         self._poll()
@@ -329,8 +330,16 @@ class AccountManager(ctk.CTk):
         self.after(3000, lambda: self._status_var.set(""))
 
     def _poll(self):
-        self._refresh()
-        self.after(2000, self._poll)
+        import os
+        from config_manager import CONFIG_PATH
+        try:
+            mtime = os.path.getmtime(CONFIG_PATH)
+        except FileNotFoundError:
+            mtime = 0.0
+        if mtime != self._last_mtime:
+            self._last_mtime = mtime
+            self._refresh()
+        self.after(1000, self._poll)
 
 
 if __name__ == "__main__":

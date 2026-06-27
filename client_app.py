@@ -270,9 +270,9 @@ class ChatApp(ctk.CTk):
         ctk.CTkButton(bot, text="＋  New Chat", height=34,
                       font=self.F_UI, command=self._new_conv,
                       ).grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(bot, text="📥  Import Claude.ai", height=28,
+        ctk.CTkButton(bot, text="📥  Get Claude.ai Chats", height=28,
                       font=self.F_SM, fg_color="#21262d", hover_color="#30363d",
-                      text_color="#adbac7", command=self._import_claudeai,
+                      text_color="#adbac7", command=self._start_claudeai_import,
                       ).grid(row=1, column=0, sticky="ew", pady=(5, 0))
 
     def _build_main(self):
@@ -469,6 +469,12 @@ class ChatApp(ctk.CTk):
                     self._finish(item["text"])
                 elif item["type"] == "error":
                     self._show_error(item["text"])
+                elif item["type"] == "import_done":
+                    self._refresh_sidebar()
+                    self._write_system_notice(
+                        f"✓ Auto-imported {item['convs']} conversations "
+                        f"({item['msgs']} messages) from Claude.ai."
+                    )
         except queue.Empty:
             pass
         self.after(40, self._poll_response)
@@ -693,30 +699,67 @@ class ChatApp(ctk.CTk):
         switcher = Path(__file__).parent / "switcher_app.py"
         subprocess.Popen([sys.executable, str(switcher)], close_fds=True)
 
+    def _start_claudeai_import(self):
+        """Open Claude.ai export page in browser, then watch Downloads for the zip."""
+        import webbrowser
+        import os, glob, threading
+        from pathlib import Path
+        from store import import_from_claudeai
+
+        # Open the export page directly
+        webbrowser.open("https://claude.ai/settings/privacy")
+
+        downloads = Path.home() / "Downloads"
+        self._write_system_notice(
+            "Browser opened → Claude.ai › Settings › Privacy › Export Data.\n"
+            "  Click 'Export Data', download the zip — it will import automatically."
+        )
+
+        # Snapshot existing zips so we only react to new ones
+        existing = set(glob.glob(str(downloads / "*.zip")) +
+                       glob.glob(str(downloads / "*.json")))
+
+        def watch():
+            import time
+            deadline = time.time() + 300  # watch for 5 minutes
+            while time.time() < deadline:
+                time.sleep(3)
+                candidates = set(glob.glob(str(downloads / "*.zip")) +
+                                 glob.glob(str(downloads / "*.json")))
+                new_files = candidates - existing
+                for f in new_files:
+                    # Only pick up Claude-looking exports
+                    name = os.path.basename(f).lower()
+                    if any(k in name for k in ("claude", "conversation", "export")):
+                        try:
+                            convs, msgs = import_from_claudeai(f)
+                            self.rq.put({
+                                "type": "import_done",
+                                "convs": convs, "msgs": msgs, "file": f,
+                            })
+                            return
+                        except Exception:
+                            existing.add(f)  # bad file, ignore it
+                    existing.add(f)  # not a Claude file, stop watching it
+
+        threading.Thread(target=watch, daemon=True).start()
+
     def _import_claudeai(self):
+        """Manual fallback — file picker."""
         from tkinter import filedialog
         from store import import_from_claudeai
 
         path = filedialog.askopenfilename(
             title="Select Claude.ai export file",
-            filetypes=[
-                ("Claude.ai export", "*.json *.zip"),
-                ("JSON", "*.json"),
-                ("ZIP", "*.zip"),
-                ("All files", "*.*"),
-            ],
+            filetypes=[("Claude.ai export", "*.json *.zip"), ("All files", "*.*")],
         )
         if not path:
             return
-
         try:
             convs, msgs = import_from_claudeai(path)
             self._refresh_sidebar()
-            messagebox.showinfo(
-                "Import complete",
-                f"Imported {convs} conversation{'s' if convs != 1 else ''} "
-                f"and {msgs} message{'s' if msgs != 1 else ''} from Claude.ai.",
-            )
+            messagebox.showinfo("Import complete",
+                f"Imported {convs} conversations and {msgs} messages.")
         except Exception as exc:
             messagebox.showerror("Import failed", str(exc))
 
