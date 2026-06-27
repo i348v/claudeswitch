@@ -340,32 +340,61 @@ class ImportWizard(ctk.CTkToplevel):
 
         if domain in ("gmail.com", "googlemail.com"):
             self._pw_label.configure(
-                text="App Password  (required for Gmail — not your regular password)"
+                text="App Password  (16-digit code from step 2 — not your Gmail password)"
             )
-            ctk.CTkLabel(self._setup_inner, text="Gmail requires two quick steps:",
+
+            # Step 1
+            ctk.CTkLabel(self._setup_inner,
+                         text="Step 1 of 2 — Enable IMAP inside Gmail",
                          font=ctk.CTkFont(size=11, weight="bold"),
-                         text_color="#e6edf3", anchor="w").pack(anchor="w", pady=(0, 4))
+                         text_color="#e6edf3").pack(anchor="w", pady=(0, 2))
+            ctk.CTkLabel(
+                self._setup_inner,
+                text="On the page that opens:\n"
+                     "  • Scroll down to the IMAP access section\n"
+                     "  • Select  'Enable IMAP'\n"
+                     "  • Scroll to the bottom and click  'Save Changes'",
+                font=F_SM, text_color=C["meta"], justify="left",
+                anchor="w", wraplength=360,
+            ).pack(anchor="w", pady=(0, 4))
             ctk.CTkButton(
                 self._setup_inner,
-                text="1 ›  Enable IMAP in Gmail Settings",
-                height=28, font=F_UI, anchor="w",
-                fg_color="#21262d", hover_color="#30363d", text_color="#79c0ff",
+                text="Open Gmail IMAP Settings →",
+                height=30, font=F_UI, anchor="w",
+                fg_color="#1f6feb", hover_color="#1a5cb0", text_color="#fff",
                 command=lambda: open_url(
                     "https://mail.google.com/mail/u/0/#settings/fwdandpop"
                 ),
-            ).pack(fill="x", pady=2)
-            ctk.CTkButton(
-                self._setup_inner,
-                text="2 ›  Create an App Password (Google Account)",
-                height=28, font=F_UI, anchor="w",
-                fg_color="#21262d", hover_color="#30363d", text_color="#79c0ff",
-                command=lambda: open_url("https://myaccount.google.com/apppasswords"),
-            ).pack(fill="x", pady=2)
+            ).pack(fill="x", pady=(0, 8))
+
+            # Divider
+            ctk.CTkFrame(self._setup_inner, height=1,
+                         fg_color=C["border"]).pack(fill="x", pady=(0, 8))
+
+            # Step 2
+            ctk.CTkLabel(self._setup_inner,
+                         text="Step 2 of 2 — Create an App Password",
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color="#e6edf3").pack(anchor="w", pady=(0, 2))
             ctk.CTkLabel(
                 self._setup_inner,
-                text="After step 2, paste the 16-character code as your password below.",
-                font=F_SM, text_color=C["meta"], wraplength=360, justify="left",
-            ).pack(anchor="w", pady=(4, 0))
+                text="On the page that opens:\n"
+                     "  • Under 'Select app'  choose  'Mail'\n"
+                     "  • Under 'Select device'  choose  'Other'\n"
+                     "    and type  ClaudeSwitch\n"
+                     "  • Click  'Generate'\n"
+                     "  • Copy the 16-character code and paste it\n"
+                     "    in the password field below",
+                font=F_SM, text_color=C["meta"], justify="left",
+                anchor="w", wraplength=360,
+            ).pack(anchor="w", pady=(0, 4))
+            ctk.CTkButton(
+                self._setup_inner,
+                text="Open Google App Passwords →",
+                height=30, font=F_UI, anchor="w",
+                fg_color="#1f6feb", hover_color="#1a5cb0", text_color="#fff",
+                command=lambda: open_url("https://myaccount.google.com/apppasswords"),
+            ).pack(fill="x")
 
         elif domain in ("outlook.com", "hotmail.com", "live.com", "msn.com"):
             self._pw_label.configure(text="Password  (your regular Outlook password)")
