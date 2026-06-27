@@ -67,6 +67,25 @@ MODELS = [
     "claude-haiku-4-5-20251001",
 ]
 
+# $/million tokens  {model: (input, output)}
+PRICING = {
+    "claude-sonnet-4-6":         (3.0,   15.0),
+    "claude-opus-4-8":           (15.0,  75.0),
+    "claude-haiku-4-5-20251001": (0.80,   4.0),
+}
+
+def _calc_cost(model: str, inp: int, out: int) -> float:
+    p = PRICING.get(model, (3.0, 15.0))
+    return (inp * p[0] + out * p[1]) / 1_000_000
+
+def _fmt_tokens(inp: int, out: int, model: str) -> str:
+    cost = _calc_cost(model, inp, out)
+    total = inp + out
+    if total == 0:
+        return ""
+    tk = f"{total/1000:.1f}k" if total >= 1000 else str(total)
+    return f"↑{inp/1000:.1f}k ↓{out/1000:.1f}k · ${cost:.4f}"
+
 
 # ── Markdown renderer ──────────────────────────────────────────────────────────
 
@@ -717,6 +736,8 @@ class ChatApp(ctk.CTk):
         self._last_account_id: str = get_active_id()
         self._inject_handoff: bool = False
         self._active_project_id: str | None = None
+        self._session_in: int = 0
+        self._session_out: int = 0
 
         # Fonts (must come after super().__init__)
         self.F_UI   = ctk.CTkFont(size=13)
@@ -837,6 +858,11 @@ class ChatApp(ctk.CTk):
                       font=self.F_SM, fg_color="#21262d", hover_color="#30363d",
                       text_color="#adbac7", command=self._start_claudeai_import,
                       ).grid(row=1, column=0, sticky="ew", pady=(5, 0))
+
+        self._usage_var = tk.StringVar(value="")
+        ctk.CTkLabel(bot, textvariable=self._usage_var,
+                     font=ctk.CTkFont(size=10), text_color=C["meta"],
+                     anchor="center").grid(row=2, column=0, sticky="ew", pady=(6, 0))
 
     def _build_main(self):
         main = ctk.CTkFrame(self, corner_radius=0, fg_color=C["bg"])
@@ -1040,7 +1066,7 @@ class ChatApp(ctk.CTk):
                 if item["type"] == "chunk":
                     self._update_stream(item["accumulated"])
                 elif item["type"] == "done":
-                    self._finish(item["text"])
+                    self._finish(item["text"], item.get("usage", {}))
                 elif item["type"] == "error":
                     self._show_error(item["text"])
                 elif item["type"] == "import_done":
@@ -1283,17 +1309,35 @@ class ChatApp(ctk.CTk):
         self.chat.configure(state=tk.DISABLED)
         self.chat.see(tk.END)
 
-    def _finish(self, full_text: str):
-        cfg = load_cfg()
+    def _finish(self, full_text: str, usage: dict = {}):
+        acc  = get_active()
+        cfg  = load_cfg()
+        inp  = usage.get("input_tokens", 0)
+        out  = usage.get("output_tokens", 0)
+        model = usage.get("model", acc.get("model", "claude-sonnet-4-6"))
+
         # Remove raw streaming text, render with markdown
         self.chat.configure(state=tk.NORMAL)
         self.chat.delete(self._stream_idx, tk.END)
         self.md.render(full_text)
+
+        # Token pill below assistant response (API mode only)
+        if inp or out:
+            label = _fmt_tokens(inp, out, model)
+            self.chat.insert(tk.END, f"\n  {label}\n", "meta")
+
         self.chat.configure(state=tk.DISABLED)
         self.chat.see(tk.END)
 
-        add_message(self.current_conv_id, "assistant", full_text, cfg["mode"], cfg.get("model", ""))
+        add_message(self.current_conv_id, "assistant", full_text, cfg["mode"],
+                    cfg.get("model", ""), input_tokens=inp, output_tokens=out)
         self.messages.append({"role": "assistant", "content": full_text, "mode": cfg["mode"]})
+
+        # Update session totals
+        if inp or out:
+            self._session_in  += inp
+            self._session_out += out
+            self._usage_var.set(_fmt_tokens(self._session_in, self._session_out, model))
 
         if len(self.messages) <= 2:
             title = self.messages[0]["content"][:50]
@@ -1482,6 +1526,7 @@ class ChatApp(ctk.CTk):
         try:
             accumulated = ""
             stop = self._stop_event
+            usage_data = {}
 
             def on_chunk(chunk: str):
                 nonlocal accumulated
@@ -1490,12 +1535,15 @@ class ChatApp(ctk.CTk):
                 accumulated += chunk
                 self.rq.put({"type": "chunk", "accumulated": accumulated})
 
+            def on_usage(u: dict):
+                usage_data.update(u)
+
             result = chat(msgs, on_chunk=on_chunk, stop_event=stop,
-                          system_prompt=system_prompt)
+                          system_prompt=system_prompt, on_usage=on_usage)
             if not stop.is_set():
-                self.rq.put({"type": "done", "text": result})
+                self.rq.put({"type": "done", "text": result, "usage": usage_data})
             else:
-                self.rq.put({"type": "done", "text": accumulated or result})
+                self.rq.put({"type": "done", "text": accumulated or result, "usage": usage_data})
         except Exception as exc:
             self.rq.put({"type": "error", "text": str(exc)})
 

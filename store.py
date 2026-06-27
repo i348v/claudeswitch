@@ -41,6 +41,10 @@ def init_db():
     msg_cols = [r[1] for r in con.execute("PRAGMA table_info(messages)").fetchall()]
     if "account_label" not in msg_cols:
         con.execute("ALTER TABLE messages ADD COLUMN account_label TEXT DEFAULT ''")
+    if "input_tokens" not in msg_cols:
+        con.execute("ALTER TABLE messages ADD COLUMN input_tokens INTEGER DEFAULT 0")
+    if "output_tokens" not in msg_cols:
+        con.execute("ALTER TABLE messages ADD COLUMN output_tokens INTEGER DEFAULT 0")
     con.commit()
     con.close()
 
@@ -109,12 +113,14 @@ def create_conversation(title="New Conversation", project_id: str | None = None)
     return conv_id
 
 
-def add_message(conv_id, role, content, mode, model="", account_label=""):
+def add_message(conv_id, role, content, mode, model="", account_label="",
+                input_tokens=0, output_tokens=0):
     now = datetime.now().isoformat()
     con = _conn()
     con.execute(
-        "INSERT INTO messages (conversation_id,role,content,mode,model,created_at,account_label) VALUES (?,?,?,?,?,?,?)",
-        (conv_id, role, content, mode, model, now, account_label),
+        "INSERT INTO messages (conversation_id,role,content,mode,model,created_at,account_label,input_tokens,output_tokens)"
+        " VALUES (?,?,?,?,?,?,?,?,?)",
+        (conv_id, role, content, mode, model, now, account_label, input_tokens, output_tokens),
     )
     con.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
     con.commit()
