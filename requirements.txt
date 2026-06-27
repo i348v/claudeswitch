@@ -1,0 +1,2 @@
+anthropic>=0.40.0
+customtkinter>=5.2.0
