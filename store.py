@@ -76,6 +76,24 @@ def get_conversations():
     return [{"id": r[0], "title": r[1], "updated_at": r[2]} for r in rows]
 
 
+def search_conversations(query: str):
+    q = f"%{query}%"
+    con = _conn()
+    rows = con.execute(
+        """
+        SELECT DISTINCT c.id, c.title, c.updated_at
+        FROM conversations c
+        LEFT JOIN messages m ON m.conversation_id = c.id
+        WHERE c.title LIKE ? OR m.content LIKE ?
+        ORDER BY c.updated_at DESC
+        LIMIT 60
+        """,
+        (q, q),
+    ).fetchall()
+    con.close()
+    return [{"id": r[0], "title": r[1], "updated_at": r[2]} for r in rows]
+
+
 def update_title(conv_id, title):
     con = _conn()
     con.execute("UPDATE conversations SET title=? WHERE id=?", (title, conv_id))

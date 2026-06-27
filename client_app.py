@@ -24,7 +24,7 @@ from store import (
     add_message,
     create_conversation,
     delete_conversation,
-    get_conversations,
+    get_conversations, search_conversations,
     get_messages,
     init_db,
     update_title,
@@ -639,7 +639,7 @@ class ChatApp(ctk.CTk):
         sb = ctk.CTkFrame(self, width=230, corner_radius=0, fg_color=C["sidebar"])
         sb.grid(row=0, column=0, sticky="nsew")
         sb.grid_propagate(False)
-        sb.grid_rowconfigure(1, weight=1)
+        sb.grid_rowconfigure(2, weight=1)
         sb.grid_columnconfigure(0, weight=1)
 
         hdr = ctk.CTkFrame(sb, fg_color="transparent", height=54)
@@ -654,12 +654,34 @@ class ChatApp(ctk.CTk):
             command=self._open_switcher,
         ).grid(row=0, column=1)
 
+        # Search box
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add("write", self._on_search)
+        search_row = ctk.CTkFrame(sb, fg_color="transparent")
+        search_row.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 4))
+        search_row.grid_columnconfigure(0, weight=1)
+        self._search_entry = ctk.CTkEntry(
+            search_row, textvariable=self._search_var,
+            placeholder_text="🔍  Search conversations…",
+            height=30, font=self.F_SM,
+            fg_color=C["border"], border_color=C["border"],
+        )
+        self._search_entry.grid(row=0, column=0, sticky="ew")
+        self._clear_search_btn = ctk.CTkButton(
+            search_row, text="✕", width=28, height=30,
+            fg_color="transparent", hover_color=C["border"],
+            font=self.F_SM, text_color=C["meta"],
+            command=self._clear_search,
+        )
+        self._clear_search_btn.grid(row=0, column=1, padx=(2, 0))
+        self._clear_search_btn.grid_remove()  # hidden until user types
+
         self.conv_scroll = ctk.CTkScrollableFrame(sb, fg_color="transparent", corner_radius=0)
-        self.conv_scroll.grid(row=1, column=0, sticky="nsew", padx=4)
+        self.conv_scroll.grid(row=2, column=0, sticky="nsew", padx=4)
         self.conv_scroll.grid_columnconfigure(0, weight=1)
 
         bot = ctk.CTkFrame(sb, fg_color="transparent")
-        bot.grid(row=2, column=0, sticky="ew", padx=10, pady=10)
+        bot.grid(row=3, column=0, sticky="ew", padx=10, pady=10)
         bot.grid_columnconfigure(0, weight=1)
         ctk.CTkButton(bot, text="＋  New Chat", height=34,
                       font=self.F_UI, command=self._new_conv,
@@ -875,12 +897,34 @@ class ChatApp(ctk.CTk):
 
     # ── Sidebar ────────────────────────────────────────────────────────────────
 
+    def _on_search(self, *_):
+        q = self._search_var.get().strip()
+        if q:
+            self._clear_search_btn.grid()
+        else:
+            self._clear_search_btn.grid_remove()
+        self._refresh_sidebar()
+
+    def _clear_search(self):
+        self._search_var.set("")
+        self._search_entry.focus()
+
     def _refresh_sidebar(self):
         for w in self.conv_scroll.winfo_children():
             w.destroy()
         self._conv_buttons.clear()
 
-        for conv in get_conversations():
+        q = self._search_var.get().strip() if hasattr(self, "_search_var") else ""
+        convs = search_conversations(q) if q else get_conversations()
+
+        if q and not convs:
+            ctk.CTkLabel(
+                self.conv_scroll, text="No results.",
+                font=self.F_SM, text_color=C["meta"],
+            ).grid(pady=20)
+            return
+
+        for conv in convs:
             label = conv["title"][:32] + ("…" if len(conv["title"]) > 32 else "")
             is_active = conv["id"] == self.current_conv_id
             btn = ctk.CTkButton(
