@@ -928,7 +928,7 @@ class ChatApp(ctk.CTk):
             bg=C["bg"], fg=C["asst_fg"],
             font=MONO,
             wrap=tk.WORD,
-            state=tk.DISABLED,
+            state=tk.NORMAL,
             relief=tk.FLAT,
             padx=28, pady=18,
             selectbackground=C["select"],
@@ -943,16 +943,19 @@ class ChatApp(ctk.CTk):
 
         self.md = MarkdownRenderer(self.chat)
 
-        # ── Copy support (disabled Text widgets don't get keyboard focus) ──
-        def _copy_chat_selection(event=None):
-            try:
-                sel = self.chat.get(tk.SEL_FIRST, tk.SEL_LAST)
-                if sel:
-                    self.clipboard_clear()
-                    self.clipboard_append(sel)
-                    return "break"
-            except tk.TclError:
-                pass
+        # ── Keep chat read-only but fully selectable ──
+        # Widget stays state=NORMAL so mouse selection and Ctrl+C work natively.
+        # Block editing keys while allowing copy, select-all, and navigation.
+        def _block_chat_edit(event):
+            ctrl = (event.state & 0x4) != 0
+            if ctrl and event.keysym.lower() in ('c', 'a'):
+                return          # allow Ctrl+C / Ctrl+A
+            if event.keysym in ('Up', 'Down', 'Left', 'Right',
+                                 'Home', 'End', 'Prior', 'Next'):
+                return          # allow scrolling / navigation
+            return "break"      # block all typing
+
+        self.chat.bind("<Key>", _block_chat_edit)
 
         def _chat_context_menu(event):
             menu = tk.Menu(self.chat, tearoff=0,
@@ -971,8 +974,6 @@ class ChatApp(ctk.CTk):
                 self.clipboard_append(self.chat.get("1.0", tk.END).strip())))
             menu.tk_popup(event.x_root, event.y_root)
 
-        self.bind_all("<Control-c>", _copy_chat_selection, add=True)
-        self.bind_all("<Control-C>", _copy_chat_selection, add=True)
         self.chat.bind("<Button-3>", _chat_context_menu)
 
         # ── Input bar ──
@@ -1061,13 +1062,13 @@ class ChatApp(ctk.CTk):
     def _write_switch_banner(self, text: str):
         self.chat.configure(state=tk.NORMAL)
         self.chat.insert(tk.END, f"\n  {text}\n", "switch_banner")
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
         self.chat.see(tk.END)
 
     def _write_system_notice(self, text: str):
         self.chat.configure(state=tk.NORMAL)
         self.chat.insert(tk.END, f"\n  {text}\n", "switch_banner")
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
         self.chat.see(tk.END)
 
     # ── Config polling ─────────────────────────────────────────────────────────
@@ -1252,7 +1253,7 @@ class ChatApp(ctk.CTk):
                 mode = m.get("mode", "subscription")
                 self._write_asst_header(mode)
                 self.md.render(m["content"])
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
         self.chat.see(tk.END)
 
         title = self.messages[0]["content"][:50] if self.messages else "New Conversation"
@@ -1272,7 +1273,7 @@ class ChatApp(ctk.CTk):
     def _clear_chat(self):
         self.chat.configure(state=tk.NORMAL)
         self.chat.delete("1.0", tk.END)
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
 
     def _write_user_header(self, account_label=""):
         self.chat.insert(tk.END, "\n")
@@ -1323,7 +1324,7 @@ class ChatApp(ctk.CTk):
             else:
                 self._write_asst_header(m.get("mode", "subscription"))
                 self.md.render(m["content"])
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
         self.chat.see(tk.END)
         self.inp.focus()
 
@@ -1339,14 +1340,14 @@ class ChatApp(ctk.CTk):
         """Mark where streaming text will be inserted."""
         self._stream_idx = self.chat.index(f"{tk.END}-1c")
         self.chat.insert(tk.END, "thinking…", "thinking_txt")
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
         self.chat.see(tk.END)
 
     def _update_stream(self, accumulated: str):
         self.chat.configure(state=tk.NORMAL)
         self.chat.delete(self._stream_idx, tk.END)
         self.chat.insert(self._stream_idx, accumulated, "streaming")
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
         self.chat.see(tk.END)
 
     def _finish(self, full_text: str, usage: dict = {}):
@@ -1365,7 +1366,7 @@ class ChatApp(ctk.CTk):
             label = _fmt_tokens(inp, out, model)
             self.chat.insert(tk.END, f"\n  {label}\n", "meta")
 
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
         self.chat.see(tk.END)
 
         add_message(self.current_conv_id, "assistant", full_text, acc["mode"],
@@ -1390,7 +1391,7 @@ class ChatApp(ctk.CTk):
         self.chat.configure(state=tk.NORMAL)
         self.chat.delete(self._stream_idx, tk.END)
         self.chat.insert(self._stream_idx, f"⚠  {msg}\n", "error_msg")
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
         self._set_loading(False)
 
     # ── File attachments ───────────────────────────────────────────────────────
@@ -1612,7 +1613,7 @@ class ChatApp(ctk.CTk):
         path = create_artifact(self.messages, self.title_lbl.cget("text"))
         self.chat.configure(state=tk.NORMAL)
         self.chat.insert(tk.END, f"\n  📎 Artifact → {path}\n", "meta")
-        self.chat.configure(state=tk.DISABLED)
+        self.chat.configure(state=tk.NORMAL)
 
     # ── Open switcher ──────────────────────────────────────────────────────────
 
