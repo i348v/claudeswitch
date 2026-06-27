@@ -350,10 +350,11 @@ class ImportWizard(ctk.CTkToplevel):
                          text_color="#e6edf3").pack(anchor="w", pady=(0, 2))
             ctk.CTkLabel(
                 self._setup_inner,
-                text="On the page that opens:\n"
-                     "  • Scroll down to the IMAP access section\n"
-                     "  • Select  'Enable IMAP'\n"
-                     "  • Scroll to the bottom and click  'Save Changes'",
+                text="On the page that opens, scroll to 'IMAP access':\n"
+                     "  • If you see Auto-Expunge / folder options → IMAP is\n"
+                     "    already ON. Skip this step, go to Step 2 below.\n"
+                     "  • If you see 'Enable IMAP' radio button → select it\n"
+                     "    and click 'Save Changes' at the bottom.",
                 font=F_SM, text_color=C["meta"], justify="left",
                 anchor="w", wraplength=360,
             ).pack(anchor="w", pady=(0, 4))
