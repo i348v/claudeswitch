@@ -17,6 +17,8 @@ env/
 ~/.claude_client/
 *.db
 *.sqlite
+client_secret.json
+gmail_token.json
 
 # OS
 .DS_Store
