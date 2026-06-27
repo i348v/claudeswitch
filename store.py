@@ -89,3 +89,72 @@ def delete_conversation(conv_id):
     con.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
     con.commit()
     con.close()
+
+
+def import_from_claudeai(path: str) -> tuple[int, int]:
+    """
+    Import conversations from a Claude.ai data export.
+    Accepts the raw conversations.json or a .zip containing it.
+    Returns (conversations_imported, messages_imported).
+    """
+    import json
+    import zipfile
+    from pathlib import Path as P
+
+    p = P(path)
+    if p.suffix.lower() == ".zip":
+        with zipfile.ZipFile(p) as z:
+            names = z.namelist()
+            target = next((n for n in names if n.endswith("conversations.json")), None)
+            if not target:
+                raise ValueError("No conversations.json found inside the zip.")
+            with z.open(target) as f:
+                data = json.load(f)
+    else:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+
+    if not isinstance(data, list):
+        raise ValueError("Unexpected format — expected a JSON array of conversations.")
+
+    conv_count = 0
+    msg_count  = 0
+    con = _conn()
+
+    for convo in data:
+        conv_id  = convo.get("uuid", str(uuid.uuid4()))
+        title    = convo.get("name") or "Imported Conversation"
+        created  = convo.get("created_at", datetime.now().isoformat())
+        updated  = convo.get("updated_at", created)
+
+        # Skip duplicates
+        if con.execute("SELECT 1 FROM conversations WHERE id=?", (conv_id,)).fetchone():
+            continue
+
+        con.execute("INSERT INTO conversations VALUES (?,?,?,?)",
+                    (conv_id, title, created, updated))
+        conv_count += 1
+
+        for msg in convo.get("chat_messages", []):
+            sender = msg.get("sender", "human")
+            role   = "user" if sender == "human" else "assistant"
+            text   = msg.get("text") or ""
+
+            # Append any extracted attachment text
+            for att in msg.get("attachments", []):
+                extracted = att.get("extracted_content") or ""
+                if extracted:
+                    fname = att.get("file_name", "attachment")
+                    text += f"\n\n[{fname}]\n{extracted}"
+
+            ts = msg.get("created_at", created)
+            con.execute(
+                "INSERT INTO messages (conversation_id,role,content,mode,model,created_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (conv_id, role, text, "imported", "", ts),
+            )
+            msg_count += 1
+
+    con.commit()
+    con.close()
+    return conv_count, msg_count

@@ -270,6 +270,10 @@ class ChatApp(ctk.CTk):
         ctk.CTkButton(bot, text="＋  New Chat", height=34,
                       font=self.F_UI, command=self._new_conv,
                       ).grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(bot, text="📥  Import Claude.ai", height=28,
+                      font=self.F_SM, fg_color="#21262d", hover_color="#30363d",
+                      text_color="#adbac7", command=self._import_claudeai,
+                      ).grid(row=1, column=0, sticky="ew", pady=(5, 0))
 
     def _build_main(self):
         main = ctk.CTkFrame(self, corner_radius=0, fg_color=C["bg"])
@@ -688,6 +692,33 @@ class ChatApp(ctk.CTk):
     def _open_switcher(self):
         switcher = Path(__file__).parent / "switcher_app.py"
         subprocess.Popen([sys.executable, str(switcher)], close_fds=True)
+
+    def _import_claudeai(self):
+        from tkinter import filedialog
+        from store import import_from_claudeai
+
+        path = filedialog.askopenfilename(
+            title="Select Claude.ai export file",
+            filetypes=[
+                ("Claude.ai export", "*.json *.zip"),
+                ("JSON", "*.json"),
+                ("ZIP", "*.zip"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+
+        try:
+            convs, msgs = import_from_claudeai(path)
+            self._refresh_sidebar()
+            messagebox.showinfo(
+                "Import complete",
+                f"Imported {convs} conversation{'s' if convs != 1 else ''} "
+                f"and {msgs} message{'s' if msgs != 1 else ''} from Claude.ai.",
+            )
+        except Exception as exc:
+            messagebox.showerror("Import failed", str(exc))
 
 
 if __name__ == "__main__":
