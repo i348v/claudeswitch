@@ -23,11 +23,16 @@ from config_manager import (
 from store import (
     add_message,
     create_conversation,
+    create_project,
     delete_conversation,
+    delete_project,
     get_conversations, search_conversations,
     get_messages,
+    get_project,
     init_db,
+    list_projects,
     truncate_messages,
+    update_project,
     update_title,
 )
 
@@ -595,6 +600,85 @@ class ImportWizard(ctk.CTkToplevel):
         self.destroy()
 
 
+# ── Project dialog ─────────────────────────────────────────────────────────────
+
+class ProjectDialog(ctk.CTkToplevel):
+    def __init__(self, parent, proj=None, on_save=None, on_delete=None):
+        super().__init__(parent)
+        self.title("Edit Project" if proj else "New Project")
+        self.geometry("420x340")
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.configure(fg_color=C["bg"])
+        self.grab_set()
+
+        self._proj    = proj
+        self._on_save = on_save
+        self._on_delete = on_delete
+
+        F_UI = ctk.CTkFont(size=13)
+        F_SM = ctk.CTkFont(size=11)
+        pad  = {"padx": 20, "pady": 5}
+
+        ctk.CTkLabel(self, text="Project Name", font=F_SM,
+                     text_color=C["meta"], anchor="w").pack(fill="x", padx=20, pady=(18, 0))
+        self._name = ctk.CTkEntry(self, placeholder_text="e.g. Work, Research, Creative",
+                                   height=34, font=F_UI)
+        self._name.pack(fill="x", **pad)
+
+        ctk.CTkLabel(self, text="System Prompt  (optional — sets Claude's persona for this project)",
+                     font=F_SM, text_color=C["meta"], anchor="w",
+                     wraplength=380).pack(fill="x", padx=20, pady=(10, 0))
+        self._sysprompt = ctk.CTkTextbox(self, height=100, font=F_SM, wrap="word")
+        self._sysprompt.pack(fill="x", **pad)
+
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=(14, 16))
+        btn_row.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkButton(btn_row, text="Save", height=36, font=F_UI,
+                       command=self._save).grid(row=0, column=0, padx=(0, 6), sticky="ew")
+        ctk.CTkButton(btn_row, text="Cancel", height=36, font=F_UI,
+                       fg_color="#21262d", hover_color="#30363d",
+                       command=self.destroy).grid(row=0, column=1, padx=(6, 0), sticky="ew")
+
+        if proj:
+            self._name.insert(0, proj.get("name", ""))
+            self._sysprompt.insert("1.0", proj.get("system_prompt", ""))
+            ctk.CTkButton(btn_row, text="🗑  Delete", height=36, font=F_UI,
+                           fg_color="#21262d", hover_color="#6e1313",
+                           text_color=C["error"],
+                           command=self._delete).grid(row=1, column=0, columnspan=2,
+                                                      sticky="ew", pady=(8, 0))
+
+    def _save(self):
+        name = self._name.get().strip()
+        if not name:
+            return
+        sp = self._sysprompt.get("1.0", "end").strip()
+        if self._proj:
+            update_project(self._proj["id"], name, sp)
+        else:
+            create_project(name, sp)
+        self.destroy()
+        if self._on_save:
+            self._on_save()
+
+    def _delete(self):
+        if not self._proj:
+            return
+        from tkinter import messagebox
+        if not messagebox.askyesno("Delete project",
+                                   f"Delete '{self._proj['name']}'? Conversations are kept.",
+                                   parent=self):
+            return
+        pid = self._proj["id"]
+        delete_project(pid)
+        self.destroy()
+        if self._on_delete:
+            self._on_delete(pid)
+
+
 # ── Main app ───────────────────────────────────────────────────────────────────
 
 class ChatApp(ctk.CTk):
@@ -614,6 +698,7 @@ class ChatApp(ctk.CTk):
         self._conv_buttons: dict[str, ctk.CTkButton] = {}
         self._last_account_id: str = get_active_id()
         self._inject_handoff: bool = False
+        self._active_project_id: str | None = None
 
         # Fonts (must come after super().__init__)
         self.F_UI   = ctk.CTkFont(size=13)
@@ -623,6 +708,7 @@ class ChatApp(ctk.CTk):
 
         init_db()
         self._build_ui()
+        self._refresh_projects()
         self._refresh_sidebar()
         self._new_conv()
         self._poll_config()
@@ -640,7 +726,7 @@ class ChatApp(ctk.CTk):
         sb = ctk.CTkFrame(self, width=230, corner_radius=0, fg_color=C["sidebar"])
         sb.grid(row=0, column=0, sticky="nsew")
         sb.grid_propagate(False)
-        sb.grid_rowconfigure(2, weight=1)
+        sb.grid_rowconfigure(4, weight=1)
         sb.grid_columnconfigure(0, weight=1)
 
         hdr = ctk.CTkFrame(sb, fg_color="transparent", height=54)
@@ -655,11 +741,26 @@ class ChatApp(ctk.CTk):
             command=self._open_switcher,
         ).grid(row=0, column=1)
 
-        # Search box
+        # ── Projects section ──
+        proj_hdr = ctk.CTkFrame(sb, fg_color="transparent")
+        proj_hdr.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 0))
+        proj_hdr.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(proj_hdr, text="PROJECTS", font=ctk.CTkFont(size=10),
+                     text_color=C["meta"]).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(proj_hdr, text="＋", width=22, height=22,
+                      fg_color="transparent", hover_color=C["border"],
+                      font=self.F_SM, text_color=C["meta"],
+                      command=self._new_project).grid(row=0, column=1)
+
+        self._proj_frame = ctk.CTkFrame(sb, fg_color="transparent")
+        self._proj_frame.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 4))
+        self._proj_frame.grid_columnconfigure(0, weight=1)
+
+        # ── Search box ──
         self._search_var = tk.StringVar()
         self._search_var.trace_add("write", self._on_search)
         search_row = ctk.CTkFrame(sb, fg_color="transparent")
-        search_row.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 4))
+        search_row.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 4))
         search_row.grid_columnconfigure(0, weight=1)
         self._search_entry = ctk.CTkEntry(
             search_row, textvariable=self._search_var,
@@ -678,11 +779,11 @@ class ChatApp(ctk.CTk):
         self._clear_search_btn.grid_remove()  # hidden until user types
 
         self.conv_scroll = ctk.CTkScrollableFrame(sb, fg_color="transparent", corner_radius=0)
-        self.conv_scroll.grid(row=2, column=0, sticky="nsew", padx=4)
+        self.conv_scroll.grid(row=4, column=0, sticky="nsew", padx=4)
         self.conv_scroll.grid_columnconfigure(0, weight=1)
 
         bot = ctk.CTkFrame(sb, fg_color="transparent")
-        bot.grid(row=3, column=0, sticky="ew", padx=10, pady=10)
+        bot.grid(row=5, column=0, sticky="ew", padx=10, pady=10)
         bot.grid_columnconfigure(0, weight=1)
         ctk.CTkButton(bot, text="＋  New Chat", height=34,
                       font=self.F_UI, command=self._new_conv,
@@ -911,6 +1012,68 @@ class ChatApp(ctk.CTk):
 
     # ── Sidebar ────────────────────────────────────────────────────────────────
 
+    # ── Projects ───────────────────────────────────────────────────────────────
+
+    def _refresh_projects(self):
+        for w in self._proj_frame.winfo_children():
+            w.destroy()
+
+        projects = list_projects()
+        # "All" pill
+        all_active = self._active_project_id is None
+        ctk.CTkButton(
+            self._proj_frame,
+            text="All chats",
+            height=26, anchor="w", font=self.F_SM,
+            fg_color=C["user_bg"] if all_active else "transparent",
+            hover_color=C["user_bg"], text_color="#e6edf3" if all_active else C["meta"],
+            command=self._deselect_project,
+        ).grid(sticky="ew", pady=1)
+
+        for p in projects:
+            is_active = self._active_project_id == p["id"]
+            row = ctk.CTkFrame(self._proj_frame, fg_color="transparent")
+            row.grid(sticky="ew", pady=1)
+            row.grid_columnconfigure(0, weight=1)
+            ctk.CTkButton(
+                row, text=f"📁  {p['name']}", height=26, anchor="w", font=self.F_SM,
+                fg_color=C["user_bg"] if is_active else "transparent",
+                hover_color=C["user_bg"],
+                text_color="#e6edf3" if is_active else C["meta"],
+                command=lambda pid=p["id"]: self._select_project(pid),
+            ).grid(row=0, column=0, sticky="ew")
+            ctk.CTkButton(
+                row, text="…", width=24, height=26, font=self.F_SM,
+                fg_color="transparent", hover_color=C["border"], text_color=C["meta"],
+                command=lambda proj=p: self._edit_project(proj),
+            ).grid(row=0, column=1)
+
+    def _select_project(self, project_id: str):
+        self._active_project_id = project_id
+        p = get_project(project_id)
+        self.title_lbl.configure(text=f"📁 {p['name']}" if p else "Project")
+        self._refresh_projects()
+        self._refresh_sidebar()
+
+    def _deselect_project(self):
+        self._active_project_id = None
+        self.title_lbl.configure(text="All Chats")
+        self._refresh_projects()
+        self._refresh_sidebar()
+
+    def _new_project(self):
+        ProjectDialog(self, on_save=self._refresh_projects)
+
+    def _edit_project(self, proj: dict):
+        ProjectDialog(self, proj=proj, on_save=self._refresh_projects,
+                      on_delete=self._on_project_deleted)
+
+    def _on_project_deleted(self, project_id: str):
+        if self._active_project_id == project_id:
+            self._active_project_id = None
+        self._refresh_projects()
+        self._refresh_sidebar()
+
     def _on_search(self, *_):
         q = self._search_var.get().strip()
         if q:
@@ -929,7 +1092,8 @@ class ChatApp(ctk.CTk):
         self._conv_buttons.clear()
 
         q = self._search_var.get().strip() if hasattr(self, "_search_var") else ""
-        convs = search_conversations(q) if q else get_conversations()
+        pid = self._active_project_id
+        convs = search_conversations(q, pid) if q else get_conversations(pid)
 
         if q and not convs:
             ctk.CTkLabel(
@@ -955,7 +1119,7 @@ class ChatApp(ctk.CTk):
     # ── Conversation ops ───────────────────────────────────────────────────────
 
     def _new_conv(self):
-        self.current_conv_id = create_conversation()
+        self.current_conv_id = create_conversation(project_id=self._active_project_id)
         self.messages = []
         self._clear_chat()
         self.title_lbl.configure(text="New Conversation")
@@ -1257,12 +1421,16 @@ class ChatApp(ctk.CTk):
         self._stop_event.clear()
 
         api_msgs = [{"role": m["role"], "content": m["content"]} for m in self.messages]
-        threading.Thread(target=self._worker, args=(api_msgs,), daemon=True).start()
+        sys_prompt = ""
+        if self._active_project_id:
+            p = get_project(self._active_project_id)
+            sys_prompt = p.get("system_prompt", "") if p else ""
+        threading.Thread(target=self._worker, args=(api_msgs, sys_prompt), daemon=True).start()
 
     def _stop(self):
         self._stop_event.set()
 
-    def _worker(self, msgs: list[dict]):
+    def _worker(self, msgs: list[dict], system_prompt: str = ""):
         try:
             accumulated = ""
             stop = self._stop_event
@@ -1274,7 +1442,8 @@ class ChatApp(ctk.CTk):
                 accumulated += chunk
                 self.rq.put({"type": "chunk", "accumulated": accumulated})
 
-            result = chat(msgs, on_chunk=on_chunk, stop_event=stop)
+            result = chat(msgs, on_chunk=on_chunk, stop_event=stop,
+                          system_prompt=system_prompt)
             if not stop.is_set():
                 self.rq.put({"type": "done", "text": result})
             else:

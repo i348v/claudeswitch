@@ -10,11 +10,18 @@ def init_db():
     DB_PATH.parent.mkdir(exist_ok=True)
     con = sqlite3.connect(DB_PATH)
     con.executescript("""
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            system_prompt TEXT,
+            created_at TEXT
+        );
         CREATE TABLE IF NOT EXISTS conversations (
             id TEXT PRIMARY KEY,
             title TEXT,
             created_at TEXT,
-            updated_at TEXT
+            updated_at TEXT,
+            project_id TEXT REFERENCES projects(id)
         );
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,6 +34,59 @@ def init_db():
             FOREIGN KEY (conversation_id) REFERENCES conversations(id)
         );
     """)
+    # Migrate: add project_id to existing conversations table if missing
+    cols = [r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()]
+    if "project_id" not in cols:
+        con.execute("ALTER TABLE conversations ADD COLUMN project_id TEXT REFERENCES projects(id)")
+    con.commit()
+    con.close()
+
+
+# ── Project helpers ────────────────────────────────────────────────────────────
+
+def create_project(name: str, system_prompt: str = "") -> str:
+    pid = str(uuid.uuid4())
+    now = datetime.now().isoformat()
+    con = _conn()
+    con.execute("INSERT INTO projects VALUES (?,?,?,?)", (pid, name, system_prompt, now))
+    con.commit()
+    con.close()
+    return pid
+
+
+def list_projects() -> list[dict]:
+    con = _conn()
+    rows = con.execute("SELECT id,name,system_prompt FROM projects ORDER BY created_at").fetchall()
+    con.close()
+    return [{"id": r[0], "name": r[1], "system_prompt": r[2]} for r in rows]
+
+
+def get_project(project_id: str) -> dict | None:
+    con = _conn()
+    row = con.execute("SELECT id,name,system_prompt FROM projects WHERE id=?", (project_id,)).fetchone()
+    con.close()
+    return {"id": row[0], "name": row[1], "system_prompt": row[2]} if row else None
+
+
+def update_project(project_id: str, name: str, system_prompt: str):
+    con = _conn()
+    con.execute("UPDATE projects SET name=?,system_prompt=? WHERE id=?",
+                (name, system_prompt, project_id))
+    con.commit()
+    con.close()
+
+
+def delete_project(project_id: str):
+    con = _conn()
+    con.execute("UPDATE conversations SET project_id=NULL WHERE project_id=?", (project_id,))
+    con.execute("DELETE FROM projects WHERE id=?", (project_id,))
+    con.commit()
+    con.close()
+
+
+def set_conversation_project(conv_id: str, project_id: str | None):
+    con = _conn()
+    con.execute("UPDATE conversations SET project_id=? WHERE id=?", (project_id, conv_id))
     con.commit()
     con.close()
 
@@ -35,11 +95,12 @@ def _conn():
     return sqlite3.connect(DB_PATH)
 
 
-def create_conversation(title="New Conversation"):
+def create_conversation(title="New Conversation", project_id: str | None = None):
     conv_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
     con = _conn()
-    con.execute("INSERT INTO conversations VALUES (?,?,?,?)", (conv_id, title, now, now))
+    con.execute("INSERT INTO conversations VALUES (?,?,?,?,?)",
+                (conv_id, title, now, now, project_id))
     con.commit()
     con.close()
     return conv_id
@@ -67,29 +128,46 @@ def get_messages(conv_id):
     return [{"role": r[0], "content": r[1], "mode": r[2], "model": r[3], "created_at": r[4]} for r in rows]
 
 
-def get_conversations():
+def get_conversations(project_id: str | None = None):
     con = _conn()
-    rows = con.execute(
-        "SELECT id,title,updated_at FROM conversations ORDER BY updated_at DESC LIMIT 60"
-    ).fetchall()
+    if project_id:
+        rows = con.execute(
+            "SELECT id,title,updated_at FROM conversations WHERE project_id=? ORDER BY updated_at DESC LIMIT 60",
+            (project_id,),
+        ).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT id,title,updated_at FROM conversations ORDER BY updated_at DESC LIMIT 60"
+        ).fetchall()
     con.close()
     return [{"id": r[0], "title": r[1], "updated_at": r[2]} for r in rows]
 
 
-def search_conversations(query: str):
+def search_conversations(query: str, project_id: str | None = None):
     q = f"%{query}%"
     con = _conn()
-    rows = con.execute(
-        """
-        SELECT DISTINCT c.id, c.title, c.updated_at
-        FROM conversations c
-        LEFT JOIN messages m ON m.conversation_id = c.id
-        WHERE c.title LIKE ? OR m.content LIKE ?
-        ORDER BY c.updated_at DESC
-        LIMIT 60
-        """,
-        (q, q),
-    ).fetchall()
+    if project_id:
+        rows = con.execute(
+            """
+            SELECT DISTINCT c.id, c.title, c.updated_at
+            FROM conversations c
+            LEFT JOIN messages m ON m.conversation_id = c.id
+            WHERE (c.title LIKE ? OR m.content LIKE ?) AND c.project_id=?
+            ORDER BY c.updated_at DESC LIMIT 60
+            """,
+            (q, q, project_id),
+        ).fetchall()
+    else:
+        rows = con.execute(
+            """
+            SELECT DISTINCT c.id, c.title, c.updated_at
+            FROM conversations c
+            LEFT JOIN messages m ON m.conversation_id = c.id
+            WHERE c.title LIKE ? OR m.content LIKE ?
+            ORDER BY c.updated_at DESC LIMIT 60
+            """,
+            (q, q),
+        ).fetchall()
     con.close()
     return [{"id": r[0], "title": r[1], "updated_at": r[2]} for r in rows]
 

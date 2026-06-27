@@ -12,20 +12,22 @@ from config_manager import get_active
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\r')
 
 
-def chat(messages, on_chunk=None, stop_event: threading.Event = None):
+def chat(messages, on_chunk=None, stop_event: threading.Event = None,
+         system_prompt: str = ""):
     """
-    messages:    [{"role": "user"|"assistant", "content": str|list}, ...]
-    on_chunk:    called with each text chunk as it arrives
-    stop_event:  set to cancel mid-stream
+    messages:      [{"role": "user"|"assistant", "content": str|list}, ...]
+    on_chunk:      called with each text chunk as it arrives
+    stop_event:    set to cancel mid-stream
+    system_prompt: optional project-level system prompt
     Returns full response text.
     """
     acc = get_active()
     if acc["mode"] == "api":
-        return _api(messages, acc, on_chunk, stop_event)
-    return _subscription(messages, acc, on_chunk, stop_event)
+        return _api(messages, acc, on_chunk, stop_event, system_prompt)
+    return _subscription(messages, acc, on_chunk, stop_event, system_prompt)
 
 
-def _api(messages, acc, on_chunk, stop_event):
+def _api(messages, acc, on_chunk, stop_event, system_prompt=""):
     if not acc.get("api_key"):
         raise ValueError(
             f"Account '{acc['label']}' has no API key. "
@@ -34,12 +36,16 @@ def _api(messages, acc, on_chunk, stop_event):
     client = anthropic.Anthropic(api_key=acc["api_key"])
     api_msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
 
-    full = ""
-    with client.messages.stream(
+    kwargs = dict(
         model=acc.get("model", "claude-sonnet-4-6"),
         max_tokens=8096,
         messages=api_msgs,
-    ) as stream:
+    )
+    if system_prompt:
+        kwargs["system"] = system_prompt
+
+    full = ""
+    with client.messages.stream(**kwargs) as stream:
         for text in stream.text_stream:
             if stop_event and stop_event.is_set():
                 break
@@ -73,7 +79,8 @@ def _build_prompt(messages) -> str:
     )
 
 
-def _subscription(messages, acc, on_chunk, stop_event: threading.Event = None):
+def _subscription(messages, acc, on_chunk, stop_event: threading.Event = None,
+                  system_prompt: str = ""):
     claude_bin = shutil.which("claude")
     if not claude_bin:
         raise FileNotFoundError(
@@ -82,6 +89,8 @@ def _subscription(messages, acc, on_chunk, stop_event: threading.Event = None):
         )
 
     prompt = _build_prompt(messages)
+    if system_prompt:
+        prompt = f"<system>\n{system_prompt}\n</system>\n\n{prompt}"
     cmd = [claude_bin, "-p", prompt, "--model", acc.get("model", "claude-sonnet-4-6")]
     if acc.get("profile"):
         cmd += ["--profile", acc["profile"]]
