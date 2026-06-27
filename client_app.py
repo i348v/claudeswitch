@@ -256,26 +256,38 @@ class ImportWizard(ctk.CTkToplevel):
                          padx=14, pady=(12, 2), anchor="w")
         ctk.CTkLabel(
             step2,
-            text="Enter the email address on your Claude.ai account.\n"
-                 "Gmail: use an App Password (myaccount.google.com › Security › App Passwords)\n"
-                 "Outlook / Yahoo / iCloud: use your regular password.",
+            text="Enter the email tied to your Claude.ai account.",
             font=F_SM, text_color=C["meta"], justify="left", anchor="w",
-            wraplength=370,
         ).pack(padx=14, pady=(0, 6), anchor="w")
 
         self._email_entry = ctk.CTkEntry(step2, placeholder_text="you@gmail.com",
                                           height=34, font=F_UI)
         self._email_entry.pack(fill="x", padx=14, pady=(0, 4))
+        self._email_entry.bind("<KeyRelease>", self._on_email_key)
+
+        # Dynamic setup card — shown/hidden based on email domain
+        self._setup_card = ctk.CTkFrame(step2, fg_color="#0d1117", corner_radius=8)
+        self._setup_card.pack(fill="x", padx=14, pady=(0, 4))
+        self._setup_inner = ctk.CTkFrame(self._setup_card, fg_color="transparent")
+        self._setup_inner.pack(fill="x", padx=10, pady=8)
+        # (contents built dynamically in _on_email_key)
 
         pw_row = ctk.CTkFrame(step2, fg_color="transparent")
         pw_row.pack(fill="x", padx=14, pady=(0, 12))
         pw_row.grid_columnconfigure(0, weight=1)
-        self._pw_entry = ctk.CTkEntry(pw_row, placeholder_text="Password / App Password",
+        self._pw_label = ctk.CTkLabel(pw_row, text="Password / App Password",
+                                       font=F_SM, text_color=C["meta"])
+        self._pw_label.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        self._pw_entry = ctk.CTkEntry(pw_row, placeholder_text="Enter password",
                                        show="•", height=34, font=F_UI)
-        self._pw_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self._pw_entry.grid(row=1, column=0, sticky="ew", padx=(0, 4))
         ctk.CTkButton(pw_row, text="👁", width=34, height=34,
                        fg_color="#21262d", hover_color="#30363d",
-                       command=self._toggle_pw).grid(row=0, column=1)
+                       command=self._toggle_pw).grid(row=1, column=1)
+
+        # Trigger setup card for any pre-filled value
+        self._last_domain = ""
+        self._on_email_key()
 
         # ── Buttons ──
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
@@ -307,6 +319,109 @@ class ImportWizard(ctk.CTkToplevel):
         self._pw_entry.configure(
             show="" if self._pw_entry.cget("show") == "•" else "•"
         )
+
+    def _on_email_key(self, event=None):
+        import webbrowser
+        email = self._email_entry.get().strip().lower()
+        domain = email.split("@")[-1] if "@" in email else ""
+        if domain == self._last_domain:
+            return
+        self._last_domain = domain
+
+        # Clear old setup card contents
+        for w in self._setup_inner.winfo_children():
+            w.destroy()
+
+        F_SM   = ctk.CTkFont(size=11)
+        F_UI   = ctk.CTkFont(size=12)
+
+        def open_url(url):
+            webbrowser.open(url)
+
+        if domain in ("gmail.com", "googlemail.com"):
+            self._pw_label.configure(
+                text="App Password  (required for Gmail — not your regular password)"
+            )
+            ctk.CTkLabel(self._setup_inner, text="Gmail requires two quick steps:",
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color="#e6edf3", anchor="w").pack(anchor="w", pady=(0, 4))
+            ctk.CTkButton(
+                self._setup_inner,
+                text="1 ›  Enable IMAP in Gmail Settings",
+                height=28, font=F_UI, anchor="w",
+                fg_color="#21262d", hover_color="#30363d", text_color="#79c0ff",
+                command=lambda: open_url(
+                    "https://mail.google.com/mail/u/0/#settings/fwdandpop"
+                ),
+            ).pack(fill="x", pady=2)
+            ctk.CTkButton(
+                self._setup_inner,
+                text="2 ›  Create an App Password (Google Account)",
+                height=28, font=F_UI, anchor="w",
+                fg_color="#21262d", hover_color="#30363d", text_color="#79c0ff",
+                command=lambda: open_url("https://myaccount.google.com/apppasswords"),
+            ).pack(fill="x", pady=2)
+            ctk.CTkLabel(
+                self._setup_inner,
+                text="After step 2, paste the 16-character code as your password below.",
+                font=F_SM, text_color=C["meta"], wraplength=360, justify="left",
+            ).pack(anchor="w", pady=(4, 0))
+
+        elif domain in ("outlook.com", "hotmail.com", "live.com", "msn.com"):
+            self._pw_label.configure(text="Password  (your regular Outlook password)")
+            ctk.CTkLabel(self._setup_inner,
+                         text="Outlook IMAP is on by default — no setup needed.",
+                         font=F_SM, text_color=C["meta"]).pack(anchor="w")
+
+        elif domain in ("yahoo.com", "ymail.com"):
+            self._pw_label.configure(text="App Password  (required for Yahoo)")
+            ctk.CTkButton(
+                self._setup_inner,
+                text="Generate Yahoo App Password →",
+                height=28, font=F_UI, anchor="w",
+                fg_color="#21262d", hover_color="#30363d", text_color="#79c0ff",
+                command=lambda: open_url(
+                    "https://login.yahoo.com/account/security/app-passwords/list"
+                ),
+            ).pack(fill="x", pady=2)
+
+        elif domain in ("icloud.com", "me.com", "mac.com"):
+            self._pw_label.configure(text="App Password  (required for iCloud)")
+            ctk.CTkButton(
+                self._setup_inner,
+                text="Generate iCloud App Password (appleid.apple.com) →",
+                height=28, font=F_UI, anchor="w",
+                fg_color="#21262d", hover_color="#30363d", text_color="#79c0ff",
+                command=lambda: open_url("https://appleid.apple.com/account/manage"),
+            ).pack(fill="x", pady=2)
+
+        elif domain in ("protonmail.com", "proton.me"):
+            self._pw_label.configure(text="IMAP Bridge Password")
+            ctk.CTkLabel(
+                self._setup_inner,
+                text="ProtonMail requires the Proton Mail Bridge app to be running.",
+                font=F_SM, text_color=C["meta"], wraplength=360,
+            ).pack(anchor="w")
+            ctk.CTkButton(
+                self._setup_inner,
+                text="Download Proton Mail Bridge →",
+                height=28, font=F_UI, anchor="w",
+                fg_color="#21262d", hover_color="#30363d", text_color="#79c0ff",
+                command=lambda: open_url("https://proton.me/mail/bridge"),
+            ).pack(fill="x", pady=2)
+
+        elif domain:
+            self._pw_label.configure(text="Password")
+            ctk.CTkLabel(
+                self._setup_inner,
+                text=f"Using IMAP on {domain}. Enter your regular email password.",
+                font=F_SM, text_color=C["meta"],
+            ).pack(anchor="w")
+
+        else:
+            ctk.CTkLabel(self._setup_inner,
+                         text="Type your email above to see setup instructions.",
+                         font=F_SM, text_color=C["thinking"]).pack(anchor="w")
 
     def _set_status(self, msg: str, color: str = C["meta"]):
         self._status_var.set(msg)
