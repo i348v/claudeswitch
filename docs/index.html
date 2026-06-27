@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClaudeSwitch</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #0d1117; color: #e6edf3; line-height: 1.6; }
+    header { border-bottom: 1px solid #21262d; padding: 24px 0; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    .logo { font-size: 20px; font-weight: 700; color: #e6edf3; text-decoration: none; }
+    nav a { color: #8b949e; text-decoration: none; margin-left: 24px; font-size: 14px; }
+    nav a:hover { color: #e6edf3; }
+    .hero { padding: 80px 0 60px; text-align: center; }
+    .hero h1 { font-size: 48px; font-weight: 800; margin-bottom: 16px;
+               background: linear-gradient(135deg, #58a6ff, #3fb950);
+               -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p { font-size: 18px; color: #8b949e; max-width: 520px; margin: 0 auto 32px; }
+    .btn { display: inline-block; padding: 12px 28px; border-radius: 8px;
+           background: #1f6feb; color: #fff; text-decoration: none;
+           font-weight: 600; font-size: 15px; margin: 0 8px; }
+    .btn.ghost { background: transparent; border: 1px solid #30363d; color: #e6edf3; }
+    .btn:hover { opacity: .85; }
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 20px; padding: 60px 0; }
+    .card { background: #161b22; border: 1px solid #21262d; border-radius: 12px; padding: 24px; }
+    .card h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: #58a6ff; }
+    .card p { font-size: 13px; color: #8b949e; }
+    footer { border-top: 1px solid #21262d; padding: 32px 0; text-align: center;
+             font-size: 13px; color: #8b949e; }
+    footer a { color: #58a6ff; text-decoration: none; margin: 0 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <nav>
+        <a class="logo" href="/">ClaudeSwitch</a>
+        <div>
+          <a href="/privacy.html">Privacy</a>
+          <a href="https://github.com/i348v/claudeswitch" target="_blank">GitHub</a>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <div class="hero">
+        <h1>ClaudeSwitch</h1>
+        <p>A desktop client for Claude AI that lets you seamlessly switch between your Claude.ai subscription and Anthropic API credits — with local conversation history and multi-account support.</p>
+        <a class="btn" href="https://github.com/i348v/claudeswitch/releases" target="_blank">Download</a>
+        <a class="btn ghost" href="https://github.com/i348v/claudeswitch" target="_blank">View on GitHub</a>
+      </div>
+
+      <div class="features">
+        <div class="card">
+          <h3>Seamless Switching</h3>
+          <p>Toggle between Claude.ai subscription and API credits mid-session without losing context.</p>
+        </div>
+        <div class="card">
+          <h3>Local Storage</h3>
+          <p>All conversations stored in SQLite on your device. Nothing leaves your machine.</p>
+        </div>
+        <div class="card">
+          <h3>Multi-Account</h3>
+          <p>Manage multiple Claude accounts in one dropdown. Switch instantly and carry context over.</p>
+        </div>
+        <div class="card">
+          <h3>Import from Claude.ai</h3>
+          <p>Bring your existing Claude.ai conversations into the desktop client with one click.</p>
+        </div>
+        <div class="card">
+          <h3>Artifact Export</h3>
+          <p>Export any conversation as a clean HTML artifact you can share or archive.</p>
+        </div>
+        <div class="card">
+          <h3>Open Source</h3>
+          <p>MIT licensed. Build on it, fork it, make it yours.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <a href="/privacy.html">Privacy Policy</a>
+    <a href="https://github.com/i348v/claudeswitch" target="_blank">GitHub</a>
+    <a href="https://github.com/i348v/claudeswitch/issues" target="_blank">Support</a>
+    <br><br>
+    &copy; 2026 Ismael Angola Parets — MIT License
+  </footer>
+</body>
+</html>

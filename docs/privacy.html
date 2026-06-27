@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — ClaudeSwitch</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #0d1117; color: #e6edf3; line-height: 1.7; }
+    header { border-bottom: 1px solid #21262d; padding: 24px 0; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    .logo { font-size: 20px; font-weight: 700; color: #e6edf3; text-decoration: none; }
+    nav a { color: #8b949e; text-decoration: none; margin-left: 24px; font-size: 14px; }
+    nav a:hover { color: #e6edf3; }
+    article { padding: 56px 0 80px; }
+    h1 { font-size: 32px; font-weight: 800; margin-bottom: 8px; }
+    .updated { color: #8b949e; font-size: 13px; margin-bottom: 40px; }
+    h2 { font-size: 18px; font-weight: 700; color: #58a6ff; margin: 36px 0 12px; }
+    p { color: #c9d1d9; margin-bottom: 14px; font-size: 15px; }
+    ul { color: #c9d1d9; margin: 0 0 14px 24px; font-size: 15px; }
+    ul li { margin-bottom: 6px; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .highlight { background: #161b22; border: 1px solid #21262d; border-radius: 10px;
+                 padding: 20px 24px; margin: 24px 0; }
+    .highlight p { margin: 0; }
+    footer { border-top: 1px solid #21262d; padding: 32px 0; text-align: center;
+             font-size: 13px; color: #8b949e; }
+    footer a { color: #58a6ff; text-decoration: none; margin: 0 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <nav>
+        <a class="logo" href="/">ClaudeSwitch</a>
+        <div>
+          <a href="/">Home</a>
+          <a href="https://github.com/i348v/claudeswitch" target="_blank">GitHub</a>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <article>
+        <h1>Privacy Policy</h1>
+        <p class="updated">Last updated: June 27, 2026</p>
+
+        <div class="highlight">
+          <p><strong>Short version:</strong> ClaudeSwitch stores everything locally on your device. We do not collect, transmit, or sell any personal data. Your conversations never leave your machine unless you explicitly export them.</p>
+        </div>
+
+        <h2>1. What ClaudeSwitch Is</h2>
+        <p>ClaudeSwitch is a free, open-source desktop application that provides a graphical interface for interacting with Claude AI. It is not affiliated with Anthropic. The source code is publicly available at <a href="https://github.com/i348v/claudeswitch" target="_blank">github.com/i348v/claudeswitch</a> under the MIT License.</p>
+
+        <h2>2. Data We Do Not Collect</h2>
+        <p>ClaudeSwitch does not operate any servers. There is no backend, no analytics, and no telemetry. We do not collect:</p>
+        <ul>
+          <li>Your name, email address, or any personal identifiers</li>
+          <li>Your conversation history or message content</li>
+          <li>Your API keys or authentication credentials</li>
+          <li>Usage statistics, crash reports, or diagnostic data</li>
+          <li>Device information or IP addresses</li>
+        </ul>
+
+        <h2>3. Data Stored Locally on Your Device</h2>
+        <p>ClaudeSwitch stores the following data <strong>only on your local machine</strong>, never transmitted to us:</p>
+        <ul>
+          <li><strong>Conversations</strong> — stored in a SQLite database at <code>~/.claude_client/conversations.db</code></li>
+          <li><strong>Account configuration</strong> — stored in <code>~/.claude_client/config.json</code>, including account labels, mode (subscription or API), and API keys you enter</li>
+          <li><strong>Exported artifacts</strong> — HTML files saved to <code>~/claude_artifacts/</code></li>
+        </ul>
+        <p>You can delete any of these files at any time to remove all local data.</p>
+
+        <h2>4. Third-Party Services</h2>
+        <p>ClaudeSwitch communicates directly with third-party services on your behalf:</p>
+        <ul>
+          <li><strong>Anthropic API</strong> — if you use API Credits mode, your messages are sent to Anthropic's API. See <a href="https://www.anthropic.com/privacy" target="_blank">Anthropic's Privacy Policy</a>.</li>
+          <li><strong>Claude Code CLI</strong> — if you use Subscription mode, messages are processed via the Claude Code CLI on your device, which uses your Claude.ai session. See <a href="https://www.anthropic.com/privacy" target="_blank">Anthropic's Privacy Policy</a>.</li>
+          <li><strong>Google Gmail API (optional)</strong> — if you use the "Import from Claude.ai" feature with Google Sign-In, ClaudeSwitch requests read-only access to your Gmail inbox solely to detect and download your Anthropic data-export email. We request the minimum scope (<code>gmail.readonly</code>). Your Gmail credentials and messages are never stored by ClaudeSwitch beyond the duration of the import session.</li>
+        </ul>
+
+        <h2>5. Google API Scopes</h2>
+        <p>When you use the Gmail import feature, ClaudeSwitch requests the following Google OAuth scope:</p>
+        <ul>
+          <li><code>https://www.googleapis.com/auth/gmail.readonly</code> — read-only access to detect the Anthropic export email and extract the download link</li>
+        </ul>
+        <p>ClaudeSwitch's use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+        <h2>6. Children's Privacy</h2>
+        <p>ClaudeSwitch is not directed at children under 13. We do not knowingly collect data from children.</p>
+
+        <h2>7. Changes to This Policy</h2>
+        <p>If this policy changes materially, the updated version will be posted at this URL with a new "Last updated" date. Continued use of the application after changes constitutes acceptance.</p>
+
+        <h2>8. Contact</h2>
+        <p>Questions or concerns? Open an issue on GitHub: <a href="https://github.com/i348v/claudeswitch/issues" target="_blank">github.com/i348v/claudeswitch/issues</a></p>
+        <p>Or email: <a href="mailto:ismaelangolaparets@gmail.com">ismaelangolaparets@gmail.com</a></p>
+      </article>
+    </div>
+  </main>
+
+  <footer>
+    <a href="/">Home</a>
+    <a href="https://github.com/i348v/claudeswitch" target="_blank">GitHub</a>
+    <a href="https://github.com/i348v/claudeswitch/issues" target="_blank">Support</a>
+    <br><br>
+    &copy; 2026 Ismael Angola Parets — MIT License
+  </footer>
+</body>
+</html>

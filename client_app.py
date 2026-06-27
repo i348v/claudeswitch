@@ -379,19 +379,37 @@ class ImportWizard(ctk.CTkToplevel):
                          text_color="#e6edf3").pack(anchor="w", pady=(0, 2))
             ctk.CTkLabel(
                 self._setup_inner,
-                text="On the page that opens:\n"
-                     "  • Under 'Select app'  choose  'Mail'\n"
-                     "  • Under 'Select device'  choose  'Other'\n"
-                     "    and type  ClaudeSwitch\n"
-                     "  • Click  'Generate'\n"
-                     "  • Copy the 16-character code and paste it\n"
-                     "    in the password field below",
+                text="App Passwords require 2-Step Verification to be on.\n"
+                     "If you see 'App not available' — do this first:",
                 font=F_SM, text_color=C["meta"], justify="left",
                 anchor="w", wraplength=360,
             ).pack(anchor="w", pady=(0, 4))
             ctk.CTkButton(
                 self._setup_inner,
-                text="Open Google App Passwords →",
+                text="① Enable 2-Step Verification →",
+                height=30, font=F_UI, anchor="w",
+                fg_color="#21262d", hover_color="#30363d", text_color="#d29922",
+                command=lambda: open_url(
+                    "https://myaccount.google.com/signinoptions/two-step-verification"
+                ),
+            ).pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(
+                self._setup_inner,
+                text="Once 2-Step Verification is on, come back here and:",
+                font=F_SM, text_color=C["meta"], justify="left", anchor="w",
+            ).pack(anchor="w", pady=(0, 2))
+            ctk.CTkLabel(
+                self._setup_inner,
+                text="  • Search for 'App Passwords' in Google Account search\n"
+                     "  • App: Mail  →  Device: Other  →  type ClaudeSwitch\n"
+                     "  • Click Generate  →  copy the 16-character code\n"
+                     "  • Paste it in the password field below",
+                font=F_SM, text_color=C["meta"], justify="left",
+                anchor="w", wraplength=360,
+            ).pack(anchor="w", pady=(0, 4))
+            ctk.CTkButton(
+                self._setup_inner,
+                text="② Open Google App Passwords →",
                 height=30, font=F_UI, anchor="w",
                 fg_color="#1f6feb", hover_color="#1a5cb0", text_color="#fff",
                 command=lambda: open_url("https://myaccount.google.com/apppasswords"),
