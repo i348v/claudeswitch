@@ -1008,7 +1008,7 @@ class ChatApp(ctk.CTk):
             finally:
                 menu.grab_release()
 
-        self.chat.bind("<ButtonRelease-3>", _chat_context_menu)
+        self.chat.bind("<Button-3>", _chat_context_menu)
 
         # ── Input bar ──
         inp_bar = ctk.CTkFrame(main, corner_radius=0, fg_color=C["sidebar"])
