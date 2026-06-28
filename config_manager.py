@@ -52,13 +52,21 @@ def save(cfg: dict):
 
 # ── Account helpers ────────────────────────────────────────────────────────────
 
+_EMPTY_ACCOUNT: dict = {
+    "label": "", "mode": "subscription", "api_key": "",
+    "model": "claude-sonnet-4-6", "profile": "",
+}
+
 def get_active() -> dict:
     cfg = load()
-    return cfg["accounts"][cfg["active"]]
+    active = cfg.get("active")
+    if not active or active not in cfg["accounts"]:
+        return dict(_EMPTY_ACCOUNT)
+    return cfg["accounts"][active]
 
 
-def get_active_id() -> str:
-    return load()["active"]
+def get_active_id() -> str | None:
+    return load().get("active")
 
 
 def set_active(acc_id: str):
