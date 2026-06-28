@@ -1311,6 +1311,7 @@ class ChatApp(ctk.CTk):
         except (ValueError, IndexError):
             if labels:
                 self.account_var.set(labels[0])
+                set_active(self._account_ids[0])
 
     def _on_account_change(self, choice: str):
         labels = self.account_menu.cget("values")
