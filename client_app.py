@@ -2305,14 +2305,17 @@ class ChatApp(ctk.CTk):
         win.title("ClaudeSwitch — Help")
         win.geometry("720x560")
         win.configure(fg_color=C["bg"])
-        SECTIONS = {
-            "Getting Started": _HELP_GETTING_STARTED,
-            "Keyboard Shortcuts": _HELP_SHORTCUTS,
-            "Features": _HELP_FEATURES,
-            "Changelog": _load_doc("CHANGELOG.md"),
-            "README": _load_doc("README.md"),
-            "License": _load_doc("LICENSE"),
-        }
+
+        # Load file-backed docs lazily so the main thread isn't blocked at open time
+        _doc_cache: dict[str, str] = {}
+        SECTION_KEYS = [
+            ("Getting Started", lambda: _HELP_GETTING_STARTED),
+            ("Keyboard Shortcuts", lambda: _HELP_SHORTCUTS),
+            ("Features", lambda: _HELP_FEATURES),
+            ("Changelog", lambda: _load_doc("CHANGELOG.md")),
+            ("README", lambda: _load_doc("README.md")),
+            ("License", lambda: _load_doc("LICENSE")),
+        ]
 
         win.grid_columnconfigure(1, weight=1)
         win.grid_rowconfigure(0, weight=1)
@@ -2339,17 +2342,20 @@ class ChatApp(ctk.CTk):
         sb = ctk.CTkScrollbar(content_frame, command=txt.yview)
         sb.grid(row=0, column=1, sticky="ns")
         txt.configure(yscrollcommand=sb.set)
+        # Block editing without disabling the widget (disabled + CTkScrollbar deadlocks on Linux)
+        txt.bind("<Key>", lambda e: "break")
 
         def _show(name):
-            txt.configure(state=tk.NORMAL)
+            if name not in _doc_cache:
+                _doc_cache[name] = next(fn for k, fn in SECTION_KEYS if k == name)()
             txt.delete("1.0", tk.END)
-            txt.insert(tk.END, SECTIONS[name])
-            txt.configure(state=tk.DISABLED)
+            txt.insert(tk.END, _doc_cache[name])
+            txt.yview_moveto(0)
             for b in nav_btns:
                 b.configure(fg_color=C["user_bg"] if b._text == name else "transparent")
 
         nav_btns = []
-        for name in SECTIONS:
+        for name, _ in SECTION_KEYS:
             b = ctk.CTkButton(nav, text=name, anchor="w", height=30,
                               font=self.F_SM, fg_color="transparent",
                               hover_color=C["border"], text_color="#adbac7",
@@ -2358,13 +2364,12 @@ class ChatApp(ctk.CTk):
             b.pack(fill="x", padx=8, pady=1)
             nav_btns.append(b)
 
-        _show("Getting Started")
+        win.after(50, lambda: _show("Getting Started"))
 
     def _open_preferences(self):
         win = ctk.CTkToplevel(self)
         win.title("Preferences")
         win.resizable(False, False)
-        win.grab_set()
         win.configure(fg_color=C["bg"])
 
         pad = {"padx": 20, "pady": 10}
