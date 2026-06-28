@@ -2301,35 +2301,39 @@ class ChatApp(ctk.CTk):
         subprocess.Popen([sys.executable, str(switcher)], close_fds=True)
 
     def _open_help(self):
-        win = ctk.CTkToplevel(self)
+        # Plain tk.Toplevel — CTkToplevel registers DPI/scaling event handlers that
+        # deadlock the main Tk event loop when scroll events fire on Linux/X11.
+        win = tk.Toplevel(self)
         win.title("ClaudeSwitch — Help")
         win.geometry("720x560")
-        win.configure(fg_color=C["bg"])
+        win.configure(bg=C["bg"])
 
-        # Load file-backed docs lazily so the main thread isn't blocked at open time
         _doc_cache: dict[str, str] = {}
         SECTION_KEYS = [
-            ("Getting Started", lambda: _HELP_GETTING_STARTED),
+            ("Getting Started",   lambda: _HELP_GETTING_STARTED),
             ("Keyboard Shortcuts", lambda: _HELP_SHORTCUTS),
-            ("Features", lambda: _HELP_FEATURES),
-            ("Changelog", lambda: _load_doc("CHANGELOG.md")),
-            ("README", lambda: _load_doc("README.md")),
-            ("License", lambda: _load_doc("LICENSE")),
+            ("Features",          lambda: _HELP_FEATURES),
+            ("Changelog",         lambda: _load_doc("CHANGELOG.md")),
+            ("README",            lambda: _load_doc("README.md")),
+            ("License",           lambda: _load_doc("LICENSE")),
         ]
 
         win.grid_columnconfigure(1, weight=1)
         win.grid_rowconfigure(0, weight=1)
 
-        # Left nav
-        nav = ctk.CTkFrame(win, width=160, fg_color=C["sidebar"], corner_radius=0)
+        # Left nav — plain tk.Frame so it stays inside the tk.Toplevel hierarchy
+        nav = tk.Frame(win, width=160, bg=C["sidebar"])
         nav.grid(row=0, column=0, sticky="nsew")
         nav.grid_propagate(False)
 
-        ctk.CTkLabel(nav, text="Help", font=self.F_BOLD,
-                     text_color="#e6edf3").pack(pady=(18, 12), padx=14, anchor="w")
+        tk.Label(nav, text="Help", bg=C["sidebar"], fg="#e6edf3",
+                 font=("sans-serif", 13, "bold")).pack(pady=(18, 12), padx=14, anchor="w")
+
+        # Divider
+        tk.Frame(nav, bg=C["border"], height=1).pack(fill="x", padx=8, pady=(0, 6))
 
         # Content area
-        content_frame = ctk.CTkFrame(win, fg_color=C["bg"], corner_radius=0)
+        content_frame = tk.Frame(win, bg=C["bg"])
         content_frame.grid(row=0, column=1, sticky="nsew")
         content_frame.grid_rowconfigure(0, weight=1)
         content_frame.grid_columnconfigure(0, weight=1)
@@ -2337,30 +2341,87 @@ class ChatApp(ctk.CTk):
         txt = tk.Text(content_frame, bg=C["bg"], fg="#e6edf3",
                       font=("monospace", 11), wrap=tk.WORD,
                       relief=tk.FLAT, padx=22, pady=18,
-                      selectbackground=C["select"])
+                      selectbackground=C["select"],
+                      cursor="arrow")
         txt.grid(row=0, column=0, sticky="nsew")
-        sb = ctk.CTkScrollbar(content_frame, command=txt.yview)
+        sb = tk.Scrollbar(content_frame, command=txt.yview,
+                          bg=C["sidebar"], troughcolor=C["bg"],
+                          activebackground=C["border"], relief=tk.FLAT, bd=0)
         sb.grid(row=0, column=1, sticky="ns")
         txt.configure(yscrollcommand=sb.set)
-        # Block editing without disabling the widget (disabled + CTkScrollbar deadlocks on Linux)
         txt.bind("<Key>", lambda e: "break")
+        txt.bind("<Control-c>", lambda e: (
+            self.clipboard_clear(),
+            self.clipboard_append(txt.get(tk.SEL_FIRST, tk.SEL_LAST))
+        ) if txt.tag_ranges(tk.SEL) else None)
+
+        def _help_context_menu(event):
+            try:
+                sel = txt.get(tk.SEL_FIRST, tk.SEL_LAST)
+            except tk.TclError:
+                sel = None
+            menu = tk.Menu(win, tearoff=0,
+                           bg=C["sidebar"], fg=C["asst_fg"],
+                           activebackground=C["select"], activeforeground="#e6edf3",
+                           bd=1, relief=tk.FLAT)
+            if sel:
+                menu.add_command(label="Copy", command=lambda s=sel: (
+                    self.clipboard_clear(), self.clipboard_append(s)))
+            else:
+                menu.add_command(label="Copy", state="disabled")
+            menu.add_command(label="Select All",
+                             command=lambda: (txt.tag_add(tk.SEL, "1.0", tk.END),
+                                             txt.mark_set(tk.INSERT, "1.0"),
+                                             txt.see(tk.INSERT)))
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+
+        txt.bind("<Button-3>", _help_context_menu)
+
+        # CTk registers bind_all("<MouseWheel>") on the root which intercepts touchpad
+        # scroll events even inside a plain tk.Toplevel. Handle scroll here and return
+        # "break" to stop propagation before it hits CTk's handler.
+        def _on_scroll(event):
+            if event.num == 4 or (hasattr(event, "delta") and event.delta > 0):
+                txt.yview_scroll(-3, "units")
+            elif event.num == 5 or (hasattr(event, "delta") and event.delta < 0):
+                txt.yview_scroll(3, "units")
+            return "break"
+
+        txt.bind("<MouseWheel>", _on_scroll)
+        txt.bind("<Button-4>",   _on_scroll)
+        txt.bind("<Button-5>",   _on_scroll)
+        # Also trap scroll events that land on the scrollbar or window frame
+        sb.bind("<MouseWheel>", _on_scroll)
+        sb.bind("<Button-4>",   _on_scroll)
+        sb.bind("<Button-5>",   _on_scroll)
+        win.bind("<MouseWheel>", _on_scroll)
+        win.bind("<Button-4>",   _on_scroll)
+        win.bind("<Button-5>",   _on_scroll)
 
         def _show(name):
             if name not in _doc_cache:
                 _doc_cache[name] = next(fn for k, fn in SECTION_KEYS if k == name)()
+            txt.configure(state=tk.NORMAL)
             txt.delete("1.0", tk.END)
             txt.insert(tk.END, _doc_cache[name])
             txt.yview_moveto(0)
+            txt.configure(state=tk.DISABLED)
             for b in nav_btns:
-                b.configure(fg_color=C["user_bg"] if b._text == name else "transparent")
+                active = b._help_name == name
+                b.configure(bg=C["user_bg"] if active else C["sidebar"],
+                            relief=tk.FLAT)
 
         nav_btns = []
         for name, _ in SECTION_KEYS:
-            b = ctk.CTkButton(nav, text=name, anchor="w", height=30,
-                              font=self.F_SM, fg_color="transparent",
-                              hover_color=C["border"], text_color="#adbac7",
-                              command=lambda n=name: _show(n))
-            b._text = name
+            b = tk.Button(nav, text=name, anchor="w", pady=6,
+                          bg=C["sidebar"], fg="#adbac7", relief=tk.FLAT,
+                          activebackground=C["border"], activeforeground="#e6edf3",
+                          font=("sans-serif", 11), bd=0,
+                          command=lambda n=name: _show(n))
+            b._help_name = name
             b.pack(fill="x", padx=8, pady=1)
             nav_btns.append(b)
 
