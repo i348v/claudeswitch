@@ -986,23 +986,26 @@ class ChatApp(ctk.CTk):
         self.chat.bind("<Control-Home>",  lambda e: (self.chat.see("1.0"), "break"))
         self.chat.bind("<Control-End>",   lambda e: (self.chat.see(tk.END), "break"))
 
+        def _make_menu(parent):
+            return tk.Menu(parent, tearoff=0,
+                           bg=C["sidebar"], fg=C["asst_fg"],
+                           activebackground=C["select"], activeforeground="#e6edf3",
+                           bd=1, relief=tk.FLAT)
+
         def _chat_context_menu(event):
             try:
                 sel = self.chat.get(tk.SEL_FIRST, tk.SEL_LAST)
             except tk.TclError:
                 sel = None
-            menu = tk.Menu(self.chat, tearoff=0,
-                           bg=C["card"], fg=C["text"],
-                           activebackground=C["active"], activeforeground="#fff",
-                           bd=0, relief=tk.FLAT)
+            menu = _make_menu(self.chat)
             if sel:
-                menu.add_command(label="Copy",       command=lambda s=sel: (
+                menu.add_command(label="Copy",     command=lambda s=sel: (
                     self.clipboard_clear(), self.clipboard_append(s)))
             else:
-                menu.add_command(label="Copy",       state="disabled")
-            menu.add_command(label="Select All",     command=_select_all)
+                menu.add_command(label="Copy",     state="disabled")
+            menu.add_command(label="Select All",   command=_select_all)
             menu.add_separator()
-            menu.add_command(label="Copy All",       command=_copy_all)
+            menu.add_command(label="Copy All",     command=_copy_all)
             try:
                 menu.tk_popup(event.x_root, event.y_root)
             finally:
@@ -1025,6 +1028,31 @@ class ChatApp(ctk.CTk):
         self.inp.grid(row=1, column=0, padx=(14, 6), pady=10, sticky="ew")
         self.inp.bind("<Return>",       self._on_enter)
         self.inp.bind("<Shift-Return>", lambda e: None)
+
+        def _inp_context_menu(event):
+            w = self.inp._textbox
+            try:
+                sel = w.get(tk.SEL_FIRST, tk.SEL_LAST)
+            except tk.TclError:
+                sel = None
+            has_sel = sel is not None
+            menu = _make_menu(w)
+            menu.add_command(label="Cut",        state="normal" if has_sel else "disabled",
+                             command=lambda: (w.event_generate("<<Cut>>"),))
+            menu.add_command(label="Copy",       state="normal" if has_sel else "disabled",
+                             command=lambda: (w.event_generate("<<Copy>>"),))
+            menu.add_command(label="Paste",
+                             command=lambda: (w.event_generate("<<Paste>>"),))
+            menu.add_separator()
+            menu.add_command(label="Select All",
+                             command=lambda: (w.tag_add(tk.SEL, "1.0", tk.END),
+                                              w.mark_set(tk.INSERT, tk.END)))
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+
+        self.inp._textbox.bind("<Button-3>", _inp_context_menu)
 
         btn_box = ctk.CTkFrame(inp_bar, fg_color="transparent")
         btn_box.grid(row=1, column=1, padx=(0, 14), pady=10, sticky="ns")

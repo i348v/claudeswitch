@@ -1,45 +1,42 @@
-import os
-import pty
-import re
-import select
-import shutil
-import subprocess
+import json
+import uuid
 import threading
-from pathlib import Path
 import anthropic
+import requests
 from config_manager import get_active
 
-_PROFILES_DIR = Path.home() / ".claude_client" / "profiles"
-
-# Strip ANSI colour / cursor codes that the CLI emits when connected to a TTY
-_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\r')
+_WEB_BASE = "https://claude.ai"
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://claude.ai/",
+    "Origin": "https://claude.ai",
+    "Content-Type": "application/json",
+    "anthropic-client-platform": "web_claude_ai",
+}
 
 
 def chat(messages, on_chunk=None, stop_event: threading.Event = None,
          system_prompt: str = "", on_usage=None):
-    """
-    messages:      [{"role": "user"|"assistant", "content": str|list}, ...]
-    on_chunk:      called with each text chunk as it arrives
-    stop_event:    set to cancel mid-stream
-    system_prompt: optional project-level system prompt
-    on_usage:      called with {"input_tokens": int, "output_tokens": int, "model": str}
-    Returns full response text.
-    """
     acc = get_active()
     if acc["mode"] == "api":
         return _api(messages, acc, on_chunk, stop_event, system_prompt, on_usage)
-    return _subscription(messages, acc, on_chunk, stop_event, system_prompt)
+    return _web_session(messages, acc, on_chunk, stop_event, system_prompt)
 
+
+# ── API key mode ───────────────────────────────────────────────────────────────
 
 def _api(messages, acc, on_chunk, stop_event, system_prompt="", on_usage=None):
     if not acc.get("api_key"):
         raise ValueError(
             f"Account '{acc['label']}' has no API key. "
-            "Open the Account Manager and add one."
+            "Open Account Manager and add one."
         )
     client = anthropic.Anthropic(api_key=acc["api_key"])
     api_msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
-
     model = acc.get("model", "claude-sonnet-4-6")
     kwargs = dict(model=model, max_tokens=8096, messages=api_msgs)
     if system_prompt:
@@ -63,20 +60,49 @@ def _api(messages, acc, on_chunk, stop_event, system_prompt="", on_usage=None):
                 except Exception:
                     pass
     except anthropic.AuthenticationError:
-        raise RuntimeError(
-            "Authentication failed — the API key is invalid or expired. "
-            "Check the key in Account Manager."
-        )
+        raise RuntimeError("API key invalid or expired — check Account Manager.")
     except anthropic.PermissionDeniedError:
-        raise RuntimeError(
-            f"Permission denied for model '{model}'. "
-            "Your API key may not have access to this model — check your Anthropic account tier."
-        )
+        raise RuntimeError(f"Permission denied for model '{model}'.")
     return full
 
 
-def _build_prompt(messages) -> str:
-    """Flatten message history into a single prompt string for the CLI."""
+# ── Web session mode ───────────────────────────────────────────────────────────
+
+def _make_session(acc) -> requests.Session:
+    cookies = acc.get("cookies", {})
+    if not cookies:
+        raise RuntimeError(
+            f"Account '{acc['label']}' has no session. "
+            "Open Account Manager → Edit → Sign In again."
+        )
+    s = requests.Session()
+    s.headers.update(_HEADERS)
+    s.cookies.update(cookies)
+    return s
+
+
+def _get_org_id(session: requests.Session, acc: dict) -> str:
+    """Get org_id — use cached value if available, otherwise fetch from API."""
+    if acc.get("org_id"):
+        return acc["org_id"]
+    resp = session.get(f"{_WEB_BASE}/api/organizations", timeout=15)
+    resp.raise_for_status()
+    orgs = resp.json()
+    if not orgs:
+        raise RuntimeError("No organizations found for this account.")
+    org_id = orgs[0]["uuid"]
+    # Cache it back into the config
+    from config_manager import load, save, get_active_id
+    cfg = load()
+    aid = get_active_id()
+    if aid in cfg["accounts"]:
+        cfg["accounts"][aid]["org_id"] = org_id
+        save(cfg)
+    return org_id
+
+
+def _build_prompt(messages, system_prompt="") -> str:
+    """Flatten message history into Human/Assistant turns."""
     def _text(content) -> str:
         if isinstance(content, list):
             return "\n".join(
@@ -85,93 +111,85 @@ def _build_prompt(messages) -> str:
             )
         return str(content)
 
-    if len(messages) == 1:
-        return _text(messages[0]["content"])
-
     parts = []
-    for m in messages[:-1]:
+    if system_prompt:
+        parts.append(f"<system>\n{system_prompt}\n</system>")
+    for m in messages:
         label = "Human" if m["role"] == "user" else "Assistant"
         parts.append(f"{label}: {_text(m['content'])}")
-    context = "\n\n".join(parts)
-    return (
-        f"<conversation_history>\n{context}\n</conversation_history>\n\n"
-        f"{_text(messages[-1]['content'])}"
+    parts.append("Assistant:")
+    return "\n\n".join(parts)
+
+
+def _web_session(messages, acc, on_chunk, stop_event, system_prompt=""):
+    session = _make_session(acc)
+    org_id  = _get_org_id(session, acc)
+    model   = acc.get("model", "claude-sonnet-4-6")
+
+    # Create a fresh conversation for this exchange
+    conv_uuid = str(uuid.uuid4())
+    session.post(
+        f"{_WEB_BASE}/api/organizations/{org_id}/chat_conversations",
+        json={"name": "", "uuid": conv_uuid},
+        timeout=15,
     )
 
-
-def _subscription(messages, acc, on_chunk, stop_event: threading.Event = None,
-                  system_prompt: str = ""):
-    claude_bin = shutil.which("claude")
-    if not claude_bin:
-        raise FileNotFoundError(
-            "'claude' CLI not found in PATH. "
-            "Install Claude Code or switch to API mode."
-        )
-
-    prompt = _build_prompt(messages)
-    if system_prompt:
-        prompt = f"<system>\n{system_prompt}\n</system>\n\n{prompt}"
-    cmd = [claude_bin, "-p", prompt, "--model", acc.get("model", "claude-sonnet-4-6")]
-
-    # Each profile is isolated via its own CLAUDE_CONFIG_DIR
-    env = dict(os.environ)
-    if acc.get("profile"):
-        profile_dir = _PROFILES_DIR / acc["profile"]
-        env["CLAUDE_CONFIG_DIR"] = str(profile_dir)
-
-    # Open a pseudo-TTY so the Node CLI streams output instead of buffering it
-    master_fd, slave_fd = pty.openpty()
-    proc = subprocess.Popen(
-        cmd,
-        stdout=slave_fd,
-        stderr=subprocess.DEVNULL,
-        env=env,
-        close_fds=True,
-    )
-    os.close(slave_fd)  # parent doesn't need the slave end
+    prompt = _build_prompt(messages, system_prompt)
+    payload = {
+        "prompt": prompt,
+        "model": model,
+        "timezone": "UTC",
+        "attachments": [],
+        "files": [],
+        "rendering_mode": "raw",
+    }
 
     full = ""
     try:
-        while True:
+        resp = session.post(
+            f"{_WEB_BASE}/api/organizations/{org_id}/chat_conversations/{conv_uuid}/completion",
+            json=payload,
+            stream=True,
+            timeout=60,
+        )
+        if resp.status_code == 401:
+            raise RuntimeError(
+                f"Session expired for '{acc['label']}'. "
+                "Open Account Manager → Edit → Sign In again."
+            )
+        resp.raise_for_status()
+
+        for raw_line in resp.iter_lines():
             if stop_event and stop_event.is_set():
-                proc.terminate()
                 break
-
-            ready, _, _ = select.select([master_fd], [], [], 0.1)
-            if ready:
-                try:
-                    raw = os.read(master_fd, 512)
-                    chunk = _ANSI_RE.sub("", raw.decode("utf-8", errors="replace"))
-                    if chunk:
-                        full += chunk
-                        if on_chunk:
-                            on_chunk(chunk)
-                except OSError:
-                    break
-            elif proc.poll() is not None:
-                # Process finished — drain any remaining output
-                try:
-                    while True:
-                        r, _, _ = select.select([master_fd], [], [], 0.05)
-                        if not r:
-                            break
-                        raw = os.read(master_fd, 512)
-                        chunk = _ANSI_RE.sub("", raw.decode("utf-8", errors="replace"))
-                        if chunk:
-                            full += chunk
-                            if on_chunk:
-                                on_chunk(chunk)
-                except OSError:
-                    pass
+            if not raw_line:
+                continue
+            line = raw_line.decode("utf-8", errors="replace")
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data in ("[DONE]", ""):
                 break
-    finally:
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
 
-    proc.wait()
-    if proc.returncode not in (0, -15) and not (stop_event and stop_event.is_set()):
-        raise RuntimeError(f"claude CLI exited with code {proc.returncode}")
+            # Handle both old and new SSE event formats
+            text = ""
+            if event.get("type") == "content_block_delta":
+                text = event.get("delta", {}).get("text", "")
+            elif event.get("type") == "completion":
+                text = event.get("completion", "")
+            elif "completion" in event and isinstance(event["completion"], str):
+                text = event["completion"]
+
+            if text:
+                full += text
+                if on_chunk:
+                    on_chunk(text)
+
+    except requests.RequestException as e:
+        raise RuntimeError(f"Network error: {e}")
 
     return full.strip()

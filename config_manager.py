@@ -74,7 +74,8 @@ def list_accounts() -> list[tuple[str, dict]]:
 
 
 def add_account(label: str, mode: str, api_key: str = "",
-                model: str = "claude-sonnet-4-6", profile: str = "") -> str:
+                model: str = "claude-sonnet-4-6", profile: str = "",
+                cookies: dict = None, org_id: str = "") -> str:
     cfg = load()
     acc_id = f"acc_{uuid.uuid4().hex[:8]}"
     cfg["accounts"][acc_id] = {
@@ -83,6 +84,8 @@ def add_account(label: str, mode: str, api_key: str = "",
         "api_key": api_key,
         "model": model,
         "profile": profile,
+        "cookies": cookies or {},
+        "org_id": org_id,
     }
     save(cfg)
     return acc_id
