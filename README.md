@@ -27,6 +27,7 @@ ClaudeSwitch is free and open source. If it saves you time or money, a tip is ge
 | Works offline (history) | ❌ | ✅ |
 | Import from Claude.ai | ❌ | ✅ |
 | Export conversations | ❌ | ✅ HTML |
+| Built-in Help & docs | ❌ | ✅ |
 | Open source | ❌ | ✅ MIT |
 
 ---
@@ -34,18 +35,23 @@ ClaudeSwitch is free and open source. If it saves you time or money, a tip is ge
 ## Features
 
 - **Multi-account switching** — add as many Claude.ai accounts or API keys as you want. A floating always-on-top switcher lets you swap instantly; the main client picks up the change within 2 seconds, no restart needed.
-- **Sidebar grouped by account** — conversations are organized under their account with colored headers, collapsible sections, and live search.
+- **Sidebar grouped by account** — conversations are organized under their account with colored headers, collapsible sections, and live search. Sidebar conversation limit is adjustable in Preferences.
 - **Projects** — create folders with a custom system prompt. Every conversation in a project uses that prompt automatically.
 - **File attachments** — attach images, PDFs, and text/code files to any message.
 - **Message editing** — click ✏ on any past message to resubmit from that point. History after the edit is replaced.
 - **Conversation search** — live-filter the sidebar as you type.
-- **Artifact export** — export any conversation to a styled, self-contained HTML file.
-- **Claude.ai import** — bring your existing claude.ai conversation history in via Gmail OAuth or IMAP.
+- **Artifact export** — export any conversation to a styled, self-contained HTML file you can open in any browser or share with others.
+- **Claude.ai import** — bring your existing claude.ai conversation history in via the built-in web session. No export file needed.
 - **Real streaming** — token-by-token rendering in both subscription and API mode.
 - **Stop generation** — cancel mid-stream at any time.
 - **Token usage & cost** — per-response and session totals shown in API mode.
+- **Preferences** — configure sidebar conversation count and other options via the ≡ menu.
+- **Button tooltips** — hover any toolbar button to see what it does.
+- **Built-in Help** — click ? in the sidebar header for Getting Started, Keyboard Shortcuts, Features, Changelog, README, and License — all searchable and scrollable without leaving the app.
+- **Right-click context menus** — Copy, Paste, Select All in both the chat area and input box. Copy also available in the Help viewer.
 - **Local SQLite storage** — everything stored at `~/.claude_client/`. Nothing leaves your machine except the actual API call.
 - **No CLI dependency** — subscription mode goes directly to claude.ai via your session cookies. No `claude` binary required.
+- **Improved WebKit login** — embedded sign-in browser with a "Done — I'm signed in" confirmation button, better Chrome spoofing, and automatic error logging if login fails.
 
 ---
 
@@ -100,8 +106,10 @@ Give the account a label (e.g. "Personal", "Work API") and click Add.
 | Shift+Enter | Newline |
 | Ctrl+C | Copy selected text |
 | Ctrl+V | Paste |
-| Ctrl+A | Select all |
-| Ctrl+Z | Undo |
+| Ctrl+A | Select all (input box) |
+| Ctrl+Shift+A | Select all text in chat |
+| Ctrl+Z | Undo (input box) |
+| Right-click | Copy / Paste / Select All menu |
 
 ---
 
