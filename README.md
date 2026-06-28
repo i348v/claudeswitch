@@ -63,7 +63,7 @@ No Anthropic API key required to use subscription mode.
 
 ```bash
 # 1. Clone
-git clone https://github.com/YOUR_GITHUB_USERNAME/claudeswitch.git
+git clone https://github.com/i348v/claudeswitch.git
 cd claudeswitch
 
 # 2. Install system dependencies (Debian/Ubuntu)
@@ -159,4 +159,4 @@ See [CHANGELOG.md](CHANGELOG.md) for a full history of changes.
 ## License
 
 MIT — see [LICENSE](LICENSE).
-Created by [Ismael Angola Parets](https://github.com/YOUR_GITHUB_USERNAME).
+Created by [Ismael Angola Parets](https://github.com/i348v).
