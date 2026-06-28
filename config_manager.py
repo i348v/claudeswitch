@@ -106,6 +106,18 @@ def update_account(acc_id: str, **kwargs):
         save(cfg)
 
 
+# ── Preferences ───────────────────────────────────────────────────────────────
+
+def get_pref(key: str, default=None):
+    return load().get("prefs", {}).get(key, default)
+
+
+def set_pref(key: str, value):
+    cfg = load()
+    cfg.setdefault("prefs", {})[key] = value
+    save(cfg)
+
+
 def remove_account(acc_id: str):
     cfg = load()
     if acc_id not in cfg["accounts"] or len(cfg["accounts"]) <= 1:

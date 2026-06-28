@@ -19,6 +19,7 @@ from config_manager import (
     load as load_cfg, save as save_cfg,
     get_active, get_active_id, set_active,
     list_accounts, update_account,
+    get_pref, set_pref,
 )
 from store import (
     add_message,
@@ -86,6 +87,49 @@ def _fmt_tokens(inp: int, out: int, model: str) -> str:
         return ""
     tk = f"{total/1000:.1f}k" if total >= 1000 else str(total)
     return f"↑{inp/1000:.1f}k ↓{out/1000:.1f}k · ${cost:.4f}"
+
+
+# ── Tooltip ───────────────────────────────────────────────────────────────────
+
+class Tooltip:
+    """Hover tooltip for any tkinter / CTk widget."""
+    _DELAY = 500  # ms before appearing
+
+    def __init__(self, widget, text: str):
+        self._w    = widget
+        self._text = text
+        self._tip  = None
+        self._job  = None
+        widget.bind("<Enter>",       self._schedule, add="+")
+        widget.bind("<Leave>",       self._cancel,   add="+")
+        widget.bind("<ButtonPress>", self._cancel,   add="+")
+
+    def _schedule(self, _=None):
+        self._cancel()
+        self._job = self._w.after(self._DELAY, self._show)
+
+    def _cancel(self, _=None):
+        if self._job:
+            self._w.after_cancel(self._job)
+            self._job = None
+        if self._tip:
+            self._tip.destroy()
+            self._tip = None
+
+    def _show(self):
+        x = self._w.winfo_rootx() + 4
+        y = self._w.winfo_rooty() + self._w.winfo_height() + 4
+        self._tip = tw = tk.Toplevel(self._w)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tw.wm_attributes("-topmost", True)
+        tk.Label(
+            tw, text=self._text,
+            background="#1c2128", foreground="#e6edf3",
+            relief="flat", borderwidth=0,
+            padx=8, pady=5,
+            font=("sans-serif", 10),
+        ).pack()
 
 
 # ── Markdown renderer ──────────────────────────────────────────────────────────
@@ -934,6 +978,138 @@ class ProjectDialog(ctk.CTkToplevel):
             self._on_delete(pid)
 
 
+# ── Help content ──────────────────────────────────────────────────────────────
+
+def _load_doc(filename: str) -> str:
+    p = Path(__file__).parent / filename
+    try:
+        return p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return f"(File not found: {filename})"
+
+_HELP_GETTING_STARTED = """\
+GETTING STARTED WITH CLAUDESWITCH
+══════════════════════════════════
+
+ClaudeSwitch is a multi-account Claude desktop client. All your
+conversations are stored locally — nothing is shared between sessions
+except the actual messages you send to Claude.
+
+────────────────────────────────────
+STEP 1 — Add your first account
+────────────────────────────────────
+Click ⚙ (top-left of the sidebar) to open the Account Manager.
+
+  • Subscription account  — Signs you into claude.ai via an embedded
+    browser. Works with Google, Apple, or email login. No API key needed.
+    Billed to your existing claude.ai subscription.
+
+  • API Credits account  — Paste your Anthropic API key (sk-ant-...).
+    Billed per-token to your Anthropic account.
+
+Give the account a label (e.g. "Personal" or "Work") and click Add.
+
+────────────────────────────────────
+STEP 2 — Start chatting
+────────────────────────────────────
+Click "+ New Chat" in the sidebar, type your message, and press Enter.
+Your active account is shown in the dropdown at the top of the window.
+
+To switch accounts, select a different one from that dropdown — or
+open the Account Manager and set a different account as active.
+
+────────────────────────────────────
+STEP 3 — Organise with Projects
+────────────────────────────────────
+Click ＋ next to PROJECTS to create a project folder.
+Projects let you set a system prompt that applies to every conversation
+inside that project — useful for giving Claude a persona or context.
+
+────────────────────────────────────
+TIPS
+────────────────────────────────────
+• Conversations are grouped by account in the sidebar.
+  Click an account header to collapse or expand its list.
+
+• Use the search box to filter conversations by keyword.
+
+• Click ✏ on any message to edit and resubmit from that point.
+  Everything after the edited message is replaced.
+
+• Attach files with 📎 Attach — images, PDFs, and text files supported.
+
+• Export any conversation to a styled HTML file with 🖼 Artifact.
+
+• Adjust how many conversations show per account under ≡ Preferences.
+"""
+
+_HELP_SHORTCUTS = """\
+KEYBOARD SHORTCUTS
+══════════════════
+
+CHAT
+  Enter          Send message
+  Shift+Enter    New line without sending
+  Ctrl+Z         Undo (in input box)
+
+TEXT
+  Ctrl+C         Copy selected text
+  Ctrl+V         Paste
+  Ctrl+A         Select all (in input box)
+  Ctrl+Shift+A   Select all text in chat
+
+WINDOW
+  Ctrl+N         New conversation (if configured)
+
+RIGHT-CLICK MENUS
+  Chat area      Copy, Select All
+  Input box      Cut, Copy, Paste, Select All
+  Conversation   Rename, Delete, Move to account
+"""
+
+_HELP_FEATURES = """\
+FEATURES
+════════
+
+MULTI-ACCOUNT SWITCHING
+  Add unlimited Claude.ai subscription accounts or Anthropic API
+  keys. Switch between them at any time — conversation history stays
+  in the sidebar, and Claude keeps its context when you switch.
+
+PROJECTS
+  Folder-style organisation with a custom system prompt per project.
+  Every conversation started inside a project uses that prompt.
+
+FILE ATTACHMENTS
+  Attach images (JPEG, PNG, GIF, WebP), PDFs, and plain text or
+  code files to any message.
+
+MESSAGE EDITING
+  Click ✏ on any past message to edit it and resubmit.
+  The conversation is rolled back to that point.
+
+CONVERSATION SEARCH
+  The search box in the sidebar filters across all conversation titles
+  and message content in real time.
+
+CLAUDE.AI IMPORT
+  Bring in your existing Claude.ai conversation history via Gmail
+  OAuth or IMAP. Click "📥 Get Claude.ai Chats" to start.
+
+ARTIFACT EXPORT
+  Export any conversation to a self-contained, styled HTML file
+  you can open in any browser or share with others.
+
+TOKEN USAGE (API MODE)
+  When using an API key account, each response shows the input and
+  output token count and estimated cost. Session totals appear in
+  the sidebar footer.
+
+NO CLI DEPENDENCY
+  Subscription mode communicates directly with claude.ai via your
+  session cookies. The Claude Code CLI is not required.
+"""
+
 # ── Main app ───────────────────────────────────────────────────────────────────
 
 class ChatApp(ctk.CTk):
@@ -1022,11 +1198,28 @@ class ChatApp(ctk.CTk):
 
         ctk.CTkLabel(hdr, text="ClaudeSwitch", font=self.F_BOLD,
                      text_color="#e6edf3").grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(
+        _gear = ctk.CTkButton(
             hdr, text="⚙", width=30, height=30, fg_color="transparent",
             hover_color=C["border"], font=ctk.CTkFont(size=16),
             command=self._open_switcher,
-        ).grid(row=0, column=1)
+        )
+        _gear.grid(row=0, column=1)
+        Tooltip(_gear, "Account Manager")
+        _prefs = ctk.CTkButton(
+            hdr, text="≡", width=30, height=30, fg_color="transparent",
+            hover_color=C["border"], font=ctk.CTkFont(size=16),
+            command=self._open_preferences,
+        )
+        _prefs.grid(row=0, column=2)
+        Tooltip(_prefs, "Preferences")
+
+        _help_btn = ctk.CTkButton(
+            hdr, text="?", width=26, height=26, fg_color="transparent",
+            hover_color=C["border"], font=ctk.CTkFont(size=12),
+            text_color=C["meta"], command=self._open_help,
+        )
+        _help_btn.grid(row=0, column=3)
+        Tooltip(_help_btn, "Help & documentation")
 
         # ── Projects section ──
         proj_hdr = ctk.CTkFrame(sb, fg_color="transparent")
@@ -1034,10 +1227,12 @@ class ChatApp(ctk.CTk):
         proj_hdr.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(proj_hdr, text="PROJECTS", font=ctk.CTkFont(size=10),
                      text_color=C["meta"]).grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(proj_hdr, text="＋", width=22, height=22,
+        _new_proj = ctk.CTkButton(proj_hdr, text="＋", width=22, height=22,
                       fg_color="transparent", hover_color=C["border"],
                       font=self.F_SM, text_color=C["meta"],
-                      command=self._new_project).grid(row=0, column=1)
+                      command=self._new_project)
+        _new_proj.grid(row=0, column=1)
+        Tooltip(_new_proj, "New Project")
 
         self._proj_frame = ctk.CTkFrame(sb, fg_color="transparent")
         self._proj_frame.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 4))
@@ -1064,6 +1259,7 @@ class ChatApp(ctk.CTk):
         )
         self._clear_search_btn.grid(row=0, column=1, padx=(2, 0))
         self._clear_search_btn.grid_remove()  # hidden until user types
+        Tooltip(self._clear_search_btn, "Clear search")
 
         self.conv_scroll = ctk.CTkScrollableFrame(sb, fg_color="transparent", corner_radius=0)
         self.conv_scroll.grid(row=4, column=0, sticky="nsew", padx=4)
@@ -1072,13 +1268,15 @@ class ChatApp(ctk.CTk):
         bot = ctk.CTkFrame(sb, fg_color="transparent")
         bot.grid(row=5, column=0, sticky="ew", padx=10, pady=10)
         bot.grid_columnconfigure(0, weight=1)
-        ctk.CTkButton(bot, text="＋  New Chat", height=34,
-                      font=self.F_UI, command=self._new_conv,
-                      ).grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(bot, text="📥  Get Claude.ai Chats", height=28,
+        _new_chat = ctk.CTkButton(bot, text="＋  New Chat", height=34,
+                      font=self.F_UI, command=self._new_conv)
+        _new_chat.grid(row=0, column=0, sticky="ew")
+        Tooltip(_new_chat, "Start a new conversation  (Ctrl+N)")
+        _import = ctk.CTkButton(bot, text="📥  Get Claude.ai Chats", height=28,
                       font=self.F_SM, fg_color="#21262d", hover_color="#30363d",
-                      text_color="#adbac7", command=self._start_claudeai_import,
-                      ).grid(row=1, column=0, sticky="ew", pady=(5, 0))
+                      text_color="#adbac7", command=self._start_claudeai_import)
+        _import.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        Tooltip(_import, "Import your Claude.ai conversation history")
 
         self._usage_var = tk.StringVar(value="")
         ctk.CTkLabel(bot, textvariable=self._usage_var,
@@ -1112,6 +1310,7 @@ class ChatApp(ctk.CTk):
         )
         self.account_menu.grid(row=0, column=1, padx=6, pady=14)
         self._rebuild_account_menu()
+        Tooltip(self.account_menu, "Switch active account")
 
         # Model selector
         acc = get_active()
@@ -1124,17 +1323,20 @@ class ChatApp(ctk.CTk):
             dropdown_fg_color=C["sidebar"],
         )
         self.model_menu.grid(row=0, column=2, padx=6, pady=14)
+        Tooltip(self.model_menu, "Select Claude model")
 
         self.mode_pill = ctk.CTkLabel(
             hdr, text="● Subscription", font=self.F_SM, text_color=C["asst_acc"]
         )
         self.mode_pill.grid(row=0, column=3, padx=(0, 4), pady=14)
 
-        ctk.CTkButton(
+        _del = ctk.CTkButton(
             hdr, text="🗑", width=30, height=30, fg_color="transparent",
             hover_color="#21262d", font=ctk.CTkFont(size=15),
             command=self._delete_conv,
-        ).grid(row=0, column=4, padx=(0, 10), pady=14)
+        )
+        _del.grid(row=0, column=4, padx=(0, 10), pady=14)
+        Tooltip(_del, "Delete this conversation")
 
         # ── Chat area ──
         chat_wrap = ctk.CTkFrame(main, fg_color=C["bg"], corner_radius=0)
@@ -1281,18 +1483,23 @@ class ChatApp(ctk.CTk):
             font=self.F_UI, command=self._send,
         )
         self.send_btn.pack(pady=(2, 3))
+        Tooltip(self.send_btn, "Send message  (Enter)")
 
-        ctk.CTkButton(
+        _attach = ctk.CTkButton(
             btn_box, text="📎  Attach", width=90, height=28,
             font=self.F_SM, fg_color="#21262d", hover_color="#30363d",
             text_color="#adbac7", command=self._pick_attachment,
-        ).pack(pady=(0, 3))
+        )
+        _attach.pack(pady=(0, 3))
+        Tooltip(_attach, "Attach a file — image, PDF, or text")
 
-        ctk.CTkButton(
+        _artifact = ctk.CTkButton(
             btn_box, text="🖼  Artifact", width=90, height=28,
             font=self.F_SM, fg_color="#21262d", hover_color="#30363d",
             text_color="#adbac7", command=self._export_artifact,
-        ).pack()
+        )
+        _artifact.pack()
+        Tooltip(_artifact, "Export conversation to HTML")
 
         self._attachments: list[dict] = []  # [{name, kind, data, media_type}]
 
@@ -1495,7 +1702,7 @@ class ChatApp(ctk.CTk):
             idx = 0
         return self._ACC_PALETTE[idx % len(self._ACC_PALETTE)]
 
-    _SIDEBAR_PAGE = 40  # conversations shown per account before "show more"
+    _SIDEBAR_PAGE_DEFAULT = 15
 
     def _refresh_sidebar(self):
         for w in self.conv_scroll.winfo_children():
@@ -1572,7 +1779,8 @@ class ChatApp(ctk.CTk):
                 continue
 
             # ── Conversations under this account (capped) ──
-            limit = len(bucket) if aid in self._expanded_accounts else self._SIDEBAR_PAGE
+            page = get_pref("sidebar_limit", self._SIDEBAR_PAGE_DEFAULT)
+            limit = len(bucket) if aid in self._expanded_accounts else page
             visible = bucket[:limit]
             for conv in visible:
                 self._sidebar_conv_row(self.conv_scroll, conv, indent=True,
@@ -2091,6 +2299,112 @@ class ChatApp(ctk.CTk):
     def _open_switcher(self):
         switcher = Path(__file__).parent / "switcher_app.py"
         subprocess.Popen([sys.executable, str(switcher)], close_fds=True)
+
+    def _open_help(self):
+        win = ctk.CTkToplevel(self)
+        win.title("ClaudeSwitch — Help")
+        win.geometry("720x560")
+        win.configure(fg_color=C["bg"])
+        SECTIONS = {
+            "Getting Started": _HELP_GETTING_STARTED,
+            "Keyboard Shortcuts": _HELP_SHORTCUTS,
+            "Features": _HELP_FEATURES,
+            "Changelog": _load_doc("CHANGELOG.md"),
+            "README": _load_doc("README.md"),
+            "License": _load_doc("LICENSE"),
+        }
+
+        win.grid_columnconfigure(1, weight=1)
+        win.grid_rowconfigure(0, weight=1)
+
+        # Left nav
+        nav = ctk.CTkFrame(win, width=160, fg_color=C["sidebar"], corner_radius=0)
+        nav.grid(row=0, column=0, sticky="nsew")
+        nav.grid_propagate(False)
+
+        ctk.CTkLabel(nav, text="Help", font=self.F_BOLD,
+                     text_color="#e6edf3").pack(pady=(18, 12), padx=14, anchor="w")
+
+        # Content area
+        content_frame = ctk.CTkFrame(win, fg_color=C["bg"], corner_radius=0)
+        content_frame.grid(row=0, column=1, sticky="nsew")
+        content_frame.grid_rowconfigure(0, weight=1)
+        content_frame.grid_columnconfigure(0, weight=1)
+
+        txt = tk.Text(content_frame, bg=C["bg"], fg="#e6edf3",
+                      font=("monospace", 11), wrap=tk.WORD,
+                      relief=tk.FLAT, padx=22, pady=18,
+                      selectbackground=C["select"])
+        txt.grid(row=0, column=0, sticky="nsew")
+        sb = ctk.CTkScrollbar(content_frame, command=txt.yview)
+        sb.grid(row=0, column=1, sticky="ns")
+        txt.configure(yscrollcommand=sb.set)
+
+        def _show(name):
+            txt.configure(state=tk.NORMAL)
+            txt.delete("1.0", tk.END)
+            txt.insert(tk.END, SECTIONS[name])
+            txt.configure(state=tk.DISABLED)
+            for b in nav_btns:
+                b.configure(fg_color=C["user_bg"] if b._text == name else "transparent")
+
+        nav_btns = []
+        for name in SECTIONS:
+            b = ctk.CTkButton(nav, text=name, anchor="w", height=30,
+                              font=self.F_SM, fg_color="transparent",
+                              hover_color=C["border"], text_color="#adbac7",
+                              command=lambda n=name: _show(n))
+            b._text = name
+            b.pack(fill="x", padx=8, pady=1)
+            nav_btns.append(b)
+
+        _show("Getting Started")
+
+    def _open_preferences(self):
+        win = ctk.CTkToplevel(self)
+        win.title("Preferences")
+        win.resizable(False, False)
+        win.grab_set()
+        win.configure(fg_color=C["bg"])
+
+        pad = {"padx": 20, "pady": 10}
+
+        # ── Sidebar section ──
+        ctk.CTkLabel(win, text="SIDEBAR", font=ctk.CTkFont(size=10),
+                     text_color=C["meta"]).grid(row=0, column=0, columnspan=2,
+                     sticky="w", padx=20, pady=(16, 2))
+
+        ctk.CTkLabel(win, text="Conversations shown per account:",
+                     font=self.F_UI, text_color="#e6edf3").grid(
+                     row=1, column=0, sticky="w", **pad)
+
+        current = get_pref("sidebar_limit", self._SIDEBAR_PAGE_DEFAULT)
+        limit_var = tk.IntVar(value=current)
+        val_lbl = ctk.CTkLabel(win, textvariable=limit_var,
+                               font=self.F_BOLD, text_color="#e6edf3", width=30)
+        val_lbl.grid(row=1, column=1, padx=(0, 20))
+
+        slider = ctk.CTkSlider(win, from_=5, to=100, number_of_steps=19,
+                               variable=limit_var, width=260,
+                               command=lambda v: limit_var.set(int(v)))
+        slider.grid(row=2, column=0, columnspan=2, padx=20, pady=(0, 6))
+
+        ctk.CTkLabel(win, text="5", font=self.F_SM, text_color=C["meta"]).grid(
+            row=3, column=0, sticky="w", padx=22)
+        ctk.CTkLabel(win, text="100", font=self.F_SM, text_color=C["meta"]).grid(
+            row=3, column=1, sticky="e", padx=22)
+
+        ctk.CTkFrame(win, height=1, fg_color=C["border"]).grid(
+            row=4, column=0, columnspan=2, sticky="ew", padx=20, pady=12)
+
+        def _save():
+            set_pref("sidebar_limit", limit_var.get())
+            self._expanded_accounts.clear()
+            self._refresh_sidebar()
+            win.destroy()
+
+        ctk.CTkButton(win, text="Save", width=100, command=_save).grid(
+            row=5, column=0, columnspan=2, pady=(0, 16))
 
     def _start_claudeai_import(self):
         LiveSyncDialog(self, on_import_done=self._on_import_done)
