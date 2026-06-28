@@ -974,7 +974,7 @@ class ChatApp(ctk.CTk):
                 self.clipboard_append(self.chat.get("1.0", tk.END).strip())))
             menu.tk_popup(event.x_root, event.y_root)
 
-        self.chat.bind("<Button-3>", _chat_context_menu)
+        self.chat.bind("<ButtonRelease-3>", _chat_context_menu)
 
         # ── Input bar ──
         inp_bar = ctk.CTkFrame(main, corner_radius=0, fg_color=C["sidebar"])
