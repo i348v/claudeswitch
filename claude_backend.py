@@ -121,6 +121,44 @@ def _build_prompt(messages, system_prompt="") -> str:
     return "\n\n".join(parts)
 
 
+def fetch_conversations(acc, on_progress=None):
+    """
+    Pull conversation history from claude.ai using stored session cookies.
+    Returns a list of conversation dicts compatible with store.import_from_claudeai.
+    on_progress(fetched, total, title) is called after each conversation is loaded.
+    """
+    session = _make_session(acc)
+    org_id  = _get_org_id(session, acc)
+
+    resp = session.get(
+        f"{_WEB_BASE}/api/organizations/{org_id}/chat_conversations",
+        timeout=30,
+    )
+    resp.raise_for_status()
+    raw = resp.json()
+    summaries = raw if isinstance(raw, list) else raw.get("conversations", [])
+
+    results = []
+    total = len(summaries)
+    for i, summary in enumerate(summaries):
+        conv_uuid = summary.get("uuid", "")
+        if not conv_uuid:
+            continue
+        try:
+            detail = session.get(
+                f"{_WEB_BASE}/api/organizations/{org_id}/chat_conversations/{conv_uuid}",
+                timeout=20,
+            )
+            conv = detail.json() if detail.status_code == 200 else summary
+        except Exception:
+            conv = summary
+        results.append(conv)
+        if on_progress:
+            on_progress(i + 1, total, summary.get("name") or "Untitled")
+
+    return results
+
+
 def _web_session(messages, acc, on_chunk, stop_event, system_prompt=""):
     session = _make_session(acc)
     org_id  = _get_org_id(session, acc)

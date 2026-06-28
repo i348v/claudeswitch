@@ -38,6 +38,8 @@ def init_db():
     conv_cols = [r[1] for r in con.execute("PRAGMA table_info(conversations)").fetchall()]
     if "project_id" not in conv_cols:
         con.execute("ALTER TABLE conversations ADD COLUMN project_id TEXT REFERENCES projects(id)")
+    if "account_id" not in conv_cols:
+        con.execute("ALTER TABLE conversations ADD COLUMN account_id TEXT DEFAULT ''")
     msg_cols = [r[1] for r in con.execute("PRAGMA table_info(messages)").fetchall()]
     if "account_label" not in msg_cols:
         con.execute("ALTER TABLE messages ADD COLUMN account_label TEXT DEFAULT ''")
@@ -102,12 +104,16 @@ def _conn():
     return sqlite3.connect(DB_PATH)
 
 
-def create_conversation(title="New Conversation", project_id: str | None = None):
+def create_conversation(title="New Conversation", project_id: str | None = None,
+                        account_id: str = ""):
     conv_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
     con = _conn()
-    con.execute("INSERT INTO conversations VALUES (?,?,?,?,?)",
-                (conv_id, title, now, now, project_id))
+    con.execute(
+        "INSERT INTO conversations (id,title,created_at,updated_at,project_id,account_id)"
+        " VALUES (?,?,?,?,?,?)",
+        (conv_id, title, now, now, project_id, account_id),
+    )
     con.commit()
     con.close()
     return conv_id
@@ -142,15 +148,18 @@ def get_conversations(project_id: str | None = None):
     con = _conn()
     if project_id:
         rows = con.execute(
-            "SELECT id,title,updated_at FROM conversations WHERE project_id=? ORDER BY updated_at DESC LIMIT 60",
+            "SELECT id,title,updated_at,account_id FROM conversations"
+            " WHERE project_id=? ORDER BY updated_at DESC LIMIT 2000",
             (project_id,),
         ).fetchall()
     else:
         rows = con.execute(
-            "SELECT id,title,updated_at FROM conversations ORDER BY updated_at DESC LIMIT 60"
+            "SELECT id,title,updated_at,account_id FROM conversations"
+            " ORDER BY updated_at DESC LIMIT 2000"
         ).fetchall()
     con.close()
-    return [{"id": r[0], "title": r[1], "updated_at": r[2]} for r in rows]
+    return [{"id": r[0], "title": r[1], "updated_at": r[2], "account_id": r[3] or ""}
+            for r in rows]
 
 
 def search_conversations(query: str, project_id: str | None = None):
@@ -159,27 +168,28 @@ def search_conversations(query: str, project_id: str | None = None):
     if project_id:
         rows = con.execute(
             """
-            SELECT DISTINCT c.id, c.title, c.updated_at
+            SELECT DISTINCT c.id, c.title, c.updated_at, c.account_id
             FROM conversations c
             LEFT JOIN messages m ON m.conversation_id = c.id
             WHERE (c.title LIKE ? OR m.content LIKE ?) AND c.project_id=?
-            ORDER BY c.updated_at DESC LIMIT 60
+            ORDER BY c.updated_at DESC LIMIT 2000
             """,
             (q, q, project_id),
         ).fetchall()
     else:
         rows = con.execute(
             """
-            SELECT DISTINCT c.id, c.title, c.updated_at
+            SELECT DISTINCT c.id, c.title, c.updated_at, c.account_id
             FROM conversations c
             LEFT JOIN messages m ON m.conversation_id = c.id
             WHERE c.title LIKE ? OR m.content LIKE ?
-            ORDER BY c.updated_at DESC LIMIT 60
+            ORDER BY c.updated_at DESC LIMIT 2000
             """,
             (q, q),
         ).fetchall()
     con.close()
-    return [{"id": r[0], "title": r[1], "updated_at": r[2]} for r in rows]
+    return [{"id": r[0], "title": r[1], "updated_at": r[2], "account_id": r[3] or ""}
+            for r in rows]
 
 
 def update_title(conv_id, title):
@@ -230,7 +240,7 @@ def delete_empty_conversations():
     con.close()
 
 
-def import_from_claudeai(path: str) -> tuple[int, int]:
+def import_from_claudeai(path: str, account_id: str = "") -> tuple[int, int]:
     """
     Import conversations from a Claude.ai data export.
     Accepts the raw conversations.json or a .zip containing it.
@@ -266,12 +276,23 @@ def import_from_claudeai(path: str) -> tuple[int, int]:
         created  = convo.get("created_at", datetime.now().isoformat())
         updated  = convo.get("updated_at", created)
 
-        # Skip duplicates
-        if con.execute("SELECT 1 FROM conversations WHERE id=?", (conv_id,)).fetchone():
+        # Skip duplicates — but backfill account_id if it was missing
+        existing = con.execute(
+            "SELECT account_id FROM conversations WHERE id=?", (conv_id,)
+        ).fetchone()
+        if existing is not None:
+            if account_id and not existing[0]:
+                con.execute(
+                    "UPDATE conversations SET account_id=? WHERE id=?",
+                    (account_id, conv_id),
+                )
             continue
 
-        con.execute("INSERT INTO conversations VALUES (?,?,?,?,?)",
-                    (conv_id, title, created, updated, None))
+        con.execute(
+            "INSERT INTO conversations (id,title,created_at,updated_at,project_id,account_id)"
+            " VALUES (?,?,?,?,?,?)",
+            (conv_id, title, created, updated, None, account_id),
+        )
         conv_count += 1
 
         for msg in convo.get("chat_messages", []):
