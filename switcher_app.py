@@ -23,7 +23,6 @@ def _run_claude_login(parent, on_cookies=None):
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
     dlg.configure(fg_color="#0d1117")
-    dlg.grab_set()
 
     F_TITLE = ctk.CTkFont(size=14, weight="bold")
     F_BODY  = ctk.CTkFont(size=12)
@@ -56,11 +55,12 @@ def _run_claude_login(parent, on_cookies=None):
             proc = subprocess.Popen(
                 [sys.executable, str(webview_script)],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
             wv_proc[0] = proc
             raw = proc.stdout.readline()
             proc.wait()
+            err_out = proc.stderr.read().decode("utf-8", errors="replace").strip()
         except Exception as e:
             parent.after(0, lambda: status_var.set(f"Error: {e}"))
             return
@@ -74,7 +74,14 @@ def _run_claude_login(parent, on_cookies=None):
             cookies = {}
 
         if not cookies.get("sessionKey"):
-            parent.after(0, lambda: status_var.set("Sign-in cancelled or failed."))
+            msg = "Sign-in cancelled or failed."
+            if err_out:
+                import sys as _sys
+                print(f"[webview_login] stderr:\n{err_out}", file=_sys.stderr, flush=True)
+                log_path = Path(__file__).parent / "webview_error.log"
+                log_path.write_text(err_out)
+                msg = "Sign-in failed — see webview_error.log for details."
+            parent.after(0, lambda: status_var.set(msg))
             return
 
         def _done():
@@ -130,9 +137,11 @@ class AccountDialog(ctk.CTkToplevel):
         self.configure(fg_color=C["bg"])
         self.grab_set()
 
-        self._acc_id   = acc_id
-        self._on_save  = on_save
-        self._cookies  = acc.get("cookies", {}) if acc else {}
+        self._acc_id          = acc_id
+        self._on_save         = on_save
+        self._cookies         = acc.get("cookies", {}) if acc else {}
+        self._original_cookies = dict(self._cookies)
+        self._original_org_id  = acc.get("org_id", "") if acc else ""
 
         F_UI = ctk.CTkFont(size=13)
         F_SM = ctk.CTkFont(size=11)
@@ -275,9 +284,11 @@ class AccountDialog(ctk.CTkToplevel):
             return
 
         if self._acc_id:
+            cookies_changed = self._cookies != self._original_cookies
             update_account(self._acc_id, label=label, mode=mode,
                            api_key=key, model=model,
-                           cookies=self._cookies, org_id="")
+                           cookies=self._cookies,
+                           org_id="" if cookies_changed else self._original_org_id)
         else:
             add_account(label, mode, key, model, cookies=self._cookies)
 
