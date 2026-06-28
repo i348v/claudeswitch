@@ -943,36 +943,70 @@ class ChatApp(ctk.CTk):
 
         self.md = MarkdownRenderer(self.chat)
 
-        # ── Keep chat read-only but fully selectable ──
-        # Widget stays state=NORMAL so mouse selection and Ctrl+C work natively.
-        # Block editing keys while allowing copy, select-all, and navigation.
-        def _block_chat_edit(event):
-            ctrl = (event.state & 0x4) != 0
-            if ctrl and event.keysym.lower() in ('c', 'a'):
-                return          # allow Ctrl+C / Ctrl+A
-            if event.keysym in ('Up', 'Down', 'Left', 'Right',
-                                 'Home', 'End', 'Prior', 'Next'):
-                return          # allow scrolling / navigation
-            return "break"      # block all typing
+        # ── Read-only chat: selection and standard shortcuts ──
+        # Widget stays NORMAL so mouse and keyboard selection work natively.
 
-        self.chat.bind("<Key>", _block_chat_edit)
+        def _select_all(event=None):
+            self.chat.tag_add(tk.SEL, "1.0", tk.END)
+            self.chat.mark_set(tk.INSERT, tk.END)
+            return "break"
+
+        def _copy_sel(event=None):
+            try:
+                sel = self.chat.get(tk.SEL_FIRST, tk.SEL_LAST)
+                self.clipboard_clear(); self.clipboard_append(sel)
+            except tk.TclError:
+                pass
+            return "break"
+
+        def _copy_all(event=None):
+            self.clipboard_clear()
+            self.clipboard_append(self.chat.get("1.0", tk.END).strip())
+            return "break"
+
+        def _block_chat_edit(event):
+            ctrl  = (event.state & 0x4) != 0
+            shift = (event.state & 0x1) != 0
+            # Allow all navigation (with or without Shift for extend-selection)
+            if event.keysym in ('Up', 'Down', 'Left', 'Right',
+                                 'Home', 'End', 'Prior', 'Next',
+                                 'Escape', 'Tab'):
+                return
+            # Allow Ctrl+C/X (copy), Ctrl+A (select-all handled below)
+            if ctrl and event.keysym.lower() in ('c', 'x', 'a'):
+                return
+            return "break"
+
+        # Explicit bindings so Linux Emacs-style defaults don't interfere
+        self.chat.bind("<Key>",           _block_chat_edit)
+        self.chat.bind("<Control-a>",     _select_all)
+        self.chat.bind("<Control-A>",     _select_all)
+        self.chat.bind("<Control-c>",     _copy_sel)
+        self.chat.bind("<Control-C>",     _copy_sel)
+        self.chat.bind("<Control-Home>",  lambda e: (self.chat.see("1.0"), "break"))
+        self.chat.bind("<Control-End>",   lambda e: (self.chat.see(tk.END), "break"))
 
         def _chat_context_menu(event):
+            try:
+                sel = self.chat.get(tk.SEL_FIRST, tk.SEL_LAST)
+            except tk.TclError:
+                sel = None
             menu = tk.Menu(self.chat, tearoff=0,
                            bg=C["card"], fg=C["text"],
                            activebackground=C["active"], activeforeground="#fff",
                            bd=0, relief=tk.FLAT)
-            try:
-                sel = self.chat.get(tk.SEL_FIRST, tk.SEL_LAST)
-                menu.add_command(label="Copy", command=lambda: (
-                    self.clipboard_clear(), self.clipboard_append(sel)))
-            except tk.TclError:
-                menu.add_command(label="Copy", state="disabled")
+            if sel:
+                menu.add_command(label="Copy",       command=lambda s=sel: (
+                    self.clipboard_clear(), self.clipboard_append(s)))
+            else:
+                menu.add_command(label="Copy",       state="disabled")
+            menu.add_command(label="Select All",     command=_select_all)
             menu.add_separator()
-            menu.add_command(label="Copy All", command=lambda: (
-                self.clipboard_clear(),
-                self.clipboard_append(self.chat.get("1.0", tk.END).strip())))
-            menu.tk_popup(event.x_root, event.y_root)
+            menu.add_command(label="Copy All",       command=_copy_all)
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
 
         self.chat.bind("<ButtonRelease-3>", _chat_context_menu)
 
