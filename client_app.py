@@ -228,6 +228,223 @@ class MarkdownRenderer:
         w.insert(tk.END, "\n\n")
 
 
+# ── Live sync dialog ──────────────────────────────────────────────────────────
+
+class LiveSyncDialog(ctk.CTkToplevel):
+    """Pull conversation history directly from claude.ai via stored session cookies."""
+
+    def __init__(self, parent, on_import_done=None):
+        super().__init__(parent)
+        self.title("Sync Conversations from Claude.ai")
+        self.geometry("440x340")
+        self.minsize(380, 280)
+        self.resizable(True, False)
+        self.attributes("-topmost", True)
+        self.configure(fg_color=C["bg"])
+
+        self._on_import_done = on_import_done
+        self._cancel_flag    = threading.Event()
+
+        F_BOLD = ctk.CTkFont(size=13, weight="bold")
+        F_UI   = ctk.CTkFont(size=13)
+        F_SM   = ctk.CTkFont(size=11)
+
+        # ── Account picker ──
+        ctk.CTkLabel(self, text="Sync Conversations from Claude.ai",
+                     font=F_BOLD, text_color="#e6edf3").pack(padx=20, pady=(18, 4), anchor="w")
+        ctk.CTkLabel(
+            self,
+            text="Imports your existing Claude.ai conversation history\n"
+                 "directly — no data export or email required.",
+            font=F_SM, text_color=C["meta"], justify="left",
+        ).pack(padx=20, pady=(0, 12), anchor="w")
+
+        acc_row = ctk.CTkFrame(self, fg_color="transparent")
+        acc_row.pack(fill="x", padx=20, pady=(0, 6))
+        acc_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(acc_row, text="Account:", font=F_SM,
+                     text_color=C["meta"]).grid(row=0, column=0, padx=(0, 8))
+
+        # Only show subscription accounts that have a valid sessionKey
+        from config_manager import list_accounts as _list
+        self._sub_accounts = [
+            (aid, acc) for aid, acc in _list()
+            if acc.get("mode") == "subscription" and acc.get("cookies", {}).get("sessionKey")
+        ]
+
+        if not self._sub_accounts:
+            ctk.CTkLabel(
+                self,
+                text="No signed-in Claude.ai accounts found.\n"
+                     "Open Account Manager (⚙) and add one first.",
+                font=F_SM, text_color=C["error"], justify="left",
+            ).pack(padx=20, pady=8, anchor="w")
+            ctk.CTkButton(self, text="Close", height=34, font=F_UI,
+                          command=self.destroy).pack(padx=20, pady=8, fill="x")
+            return
+
+        self._acc_var = tk.StringVar()
+        labels = [acc["label"] for _, acc in self._sub_accounts]
+        acc_menu = ctk.CTkOptionMenu(
+            acc_row, variable=self._acc_var, values=labels,
+            height=30, font=F_SM,
+            fg_color="#21262d", button_color="#30363d",
+            dropdown_fg_color=C["sidebar"],
+        )
+        acc_menu.set(labels[0])
+        acc_menu.grid(row=0, column=1, sticky="ew")
+
+        # ── Progress ──
+        self._status_var = tk.StringVar(value="Ready — click Sync to begin.")
+        self._status_lbl = ctk.CTkLabel(self, textvariable=self._status_var,
+                     font=F_SM, text_color=C["meta"],
+                     wraplength=390, justify="left")
+        self._status_lbl.pack(padx=20, pady=(8, 4), anchor="w")
+
+        self._progress = ctk.CTkProgressBar(self, height=8)
+        self._progress.set(0)
+        self._progress.pack(fill="x", padx=20, pady=(0, 12))
+
+        # ── Buttons ──
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=(0, 12))
+        btn_row.grid_columnconfigure(0, weight=1)
+
+        self._sync_btn = ctk.CTkButton(
+            btn_row, text="⬇  Sync Now", height=36, font=F_UI,
+            command=self._start_sync,
+        )
+        self._sync_btn.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+
+        self._cancel_btn = ctk.CTkButton(
+            btn_row, text="Cancel", height=36, font=F_UI,
+            fg_color="#21262d", hover_color="#30363d",
+            command=self._close,
+        )
+        self._cancel_btn.grid(row=0, column=1, padx=(6, 0))
+
+        ctk.CTkButton(
+            self,
+            text="Import from file instead (IMAP / data export)…",
+            height=26, font=F_SM,
+            fg_color="transparent", hover_color=C["border"],
+            text_color=C["meta"],
+            command=self._open_wizard,
+        ).pack(pady=(0, 8))
+
+        # ── Done banner — lives in the empty space at the bottom, revealed on finish ──
+        self._done_frame = ctk.CTkFrame(
+            self, fg_color="transparent", corner_radius=10,
+            border_width=0,
+        )
+        self._done_frame.pack(fill="x", padx=20, pady=(0, 16), expand=True)
+
+        self._done_inner_lbl = ctk.CTkLabel(
+            self._done_frame,
+            text="",
+            font=F_SM, text_color="#3fb950",
+        )
+        self._done_inner_btn = ctk.CTkButton(
+            self._done_frame,
+            text="✓  Close this window",
+            height=38, font=F_UI,
+            fg_color="#2ea043", hover_color="#3fb950",
+            text_color="#0d1117",
+            command=self._close,
+        )
+
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _selected_acc(self):
+        label = self._acc_var.get()
+        for aid, acc in self._sub_accounts:
+            if acc["label"] == label:
+                return aid, acc
+        return (None, self._sub_accounts[0][1]) if self._sub_accounts else (None, None)
+
+    def _set_status(self, msg, color=None):
+        self._status_var.set(msg)
+
+    def _start_sync(self):
+        acc_id, acc = self._selected_acc()
+        if not acc:
+            return
+        self._sync_btn.configure(state="disabled", text="Syncing…")
+        self._cancel_flag.clear()
+        self._progress.set(0)
+        self._set_status("Connecting to Claude.ai…")
+        threading.Thread(target=self._worker, args=(acc_id, acc), daemon=True).start()
+
+    def _worker(self, acc_id, acc):
+        from claude_backend import fetch_conversations
+        import json, tempfile
+
+        try:
+            def on_progress(fetched, total, title):
+                if total > 0:
+                    self.after(0, lambda f=fetched, t=total, n=title: (
+                        self._progress.set(f / t),
+                        self._set_status(f"Fetching {f}/{t}: {n[:40]}…"),
+                    ))
+
+            conversations = fetch_conversations(acc, on_progress=on_progress)
+
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, encoding="utf-8"
+            )
+            json.dump(conversations, tmp, ensure_ascii=False)
+            tmp.close()
+
+            self.after(0, lambda p=tmp.name, aid=acc_id: self._finish(p, aid))
+
+        except Exception as exc:
+            self.after(0, lambda e=str(exc): self._on_error(e))
+
+    def _finish(self, tmp_path, acc_id=""):
+        from store import import_from_claudeai
+        import os
+        try:
+            convs, msgs = import_from_claudeai(tmp_path, account_id=acc_id)
+        except Exception as exc:
+            self._on_error(str(exc))
+            return
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+        self._progress.set(1.0)
+        self._progress.configure(progress_color="#2ea043")
+        self._set_status(f"✓  {convs} new conversations, {msgs} messages imported.")
+        self._status_lbl.configure(text_color="#3fb950")
+        self._sync_btn.configure(state="normal", text="⬇  Sync Again")
+        self._cancel_btn.configure(state="disabled")
+
+        # Reveal the done banner in the empty space at the bottom
+        self._done_frame.configure(fg_color="#0f2a1a", border_width=1, border_color="#2ea043")
+        self._done_inner_lbl.configure(
+            text="🎉  All done! Your conversations are in the sidebar.",
+        )
+        self._done_inner_lbl.pack(padx=16, pady=(12, 6))
+        self._done_inner_btn.pack(fill="x", padx=16, pady=(0, 14))
+
+        if self._on_import_done:
+            self._on_import_done(convs, msgs)
+
+    def _on_error(self, msg):
+        self._set_status(f"⚠ {msg}")
+        self._sync_btn.configure(state="normal", text="⬇  Sync Now")
+
+    def _close(self):
+        self._cancel_flag.set()
+        self.destroy()
+
+    def _open_wizard(self):
+        self.destroy()
+        ImportWizard(self.master, on_import_done=self._on_import_done)
+
+
 # ── Import wizard ──────────────────────────────────────────────────────────────
 
 class ImportWizard(ctk.CTkToplevel):
@@ -739,6 +956,8 @@ class ChatApp(ctk.CTk):
         self._active_project_id: str | None = None
         self._session_in: int = 0
         self._session_out: int = 0
+        self._collapsed_accounts: set[str] = set()
+        self._expanded_accounts: set[str] = set()  # accounts showing full list
 
         # Fonts (must come after super().__init__)
         self.F_UI   = ctk.CTkFont(size=13)
@@ -1258,6 +1477,25 @@ class ChatApp(ctk.CTk):
         self._search_var.set("")
         self._search_entry.focus()
 
+    _ACC_PALETTE = [
+        "#388bfd",  # blue
+        "#3fb950",  # green
+        "#d29922",  # amber
+        "#f78166",  # coral
+        "#79c0ff",  # sky
+        "#d2a8ff",  # lavender
+    ]
+
+    def _account_color(self, acc_id: str) -> str:
+        ids = [aid for aid, _ in list_accounts()]
+        try:
+            idx = ids.index(acc_id)
+        except ValueError:
+            idx = 0
+        return self._ACC_PALETTE[idx % len(self._ACC_PALETTE)]
+
+    _SIDEBAR_PAGE = 40  # conversations shown per account before "show more"
+
     def _refresh_sidebar(self):
         for w in self.conv_scroll.winfo_children():
             w.destroy()
@@ -1274,19 +1512,186 @@ class ChatApp(ctk.CTk):
             ).grid(pady=20)
             return
 
+        # During search, show a flat list (no grouping, capped at 100)
+        if q:
+            for conv in convs[:100]:
+                self._sidebar_conv_row(self.conv_scroll, conv, indent=False)
+            return
+
+        # Group conversations by account_id
+        accounts = list_accounts()
+        acc_map  = {aid: acc for aid, acc in accounts}
+        acc_order = [aid for aid, _ in accounts]
+
+        grouped: dict[str, list] = {aid: [] for aid in acc_order}
+        grouped["__none__"] = []
         for conv in convs:
-            label = conv["title"][:32] + ("…" if len(conv["title"]) > 32 else "")
-            is_active = conv["id"] == self.current_conv_id
-            btn = ctk.CTkButton(
-                self.conv_scroll,
-                text=label, anchor="w", height=30, font=self.F_SM,
-                fg_color=C["user_bg"] if is_active else "transparent",
-                hover_color=C["user_bg"],
-                text_color="#e6edf3" if is_active else "#adbac7",
-                command=lambda cid=conv["id"]: self._load_conv(cid),
+            aid = conv.get("account_id", "") or "__none__"
+            if aid not in grouped:
+                grouped[aid] = []
+            grouped[aid].append(conv)
+
+        row_idx = 0
+        for aid in acc_order + ["__none__"]:
+            bucket = grouped.get(aid, [])
+            if not bucket:
+                continue
+
+            if aid == "__none__":
+                label = "Other"
+                color = C["meta"]
+            else:
+                label = acc_map[aid]["label"]
+                color = self._account_color(aid)
+
+            # ── Section header (collapsible) ──
+            is_open = aid not in self._collapsed_accounts
+
+            hdr = ctk.CTkFrame(self.conv_scroll, fg_color=C["border"], corner_radius=6)
+            hdr.grid(row=row_idx, column=0, sticky="ew", padx=4, pady=(6, 1))
+            hdr.grid_columnconfigure(1, weight=1)
+            row_idx += 1
+
+            ctk.CTkFrame(hdr, width=3, height=20, corner_radius=2,
+                         fg_color=color).grid(row=0, column=0, padx=(6, 0), pady=6)
+
+            chevron = "▼" if is_open else "▶"
+            count   = len(bucket)
+            hdr_btn = ctk.CTkButton(
+                hdr,
+                text=f"{chevron}  {label}  ({count})",
+                anchor="w", height=28, font=self.F_SM,
+                fg_color="transparent", hover_color=C["user_bg"],
+                text_color="#e6edf3",
+                command=lambda a=aid: self._toggle_account_section(a),
             )
-            btn.grid(sticky="ew", pady=1, padx=2)
-            self._conv_buttons[conv["id"]] = btn
+            hdr_btn.grid(row=0, column=1, sticky="ew", padx=(4, 4))
+
+            if not is_open:
+                continue
+
+            # ── Conversations under this account (capped) ──
+            limit = len(bucket) if aid in self._expanded_accounts else self._SIDEBAR_PAGE
+            visible = bucket[:limit]
+            for conv in visible:
+                self._sidebar_conv_row(self.conv_scroll, conv, indent=True,
+                                       grid_row=row_idx)
+                row_idx += 1
+
+            remaining = len(bucket) - len(visible)
+            if remaining > 0:
+                show_more = ctk.CTkButton(
+                    self.conv_scroll,
+                    text=f"⋯  show {remaining} more",
+                    anchor="w", height=24, font=self.F_SM,
+                    fg_color="transparent", hover_color=C["border"],
+                    text_color=C["meta"],
+                    command=lambda a=aid: self._expand_account_section(a),
+                )
+                show_more.grid(row=row_idx, column=0, sticky="ew",
+                               padx=(18, 4), pady=(0, 2))
+                row_idx += 1
+
+    def _expand_account_section(self, acc_id: str):
+        self._expanded_accounts.add(acc_id)
+        self._refresh_sidebar()
+
+    def _sidebar_conv_row(self, parent, conv: dict, indent: bool = True,
+                          grid_row: int | None = None):
+        title     = conv["title"][:26] + ("…" if len(conv["title"]) > 26 else "")
+        is_active = conv["id"] == self.current_conv_id
+
+        btn = ctk.CTkButton(
+            parent,
+            text=title, anchor="w", height=28, font=self.F_SM,
+            fg_color=C["user_bg"] if is_active else "transparent",
+            hover_color=C["user_bg"],
+            text_color="#e6edf3" if is_active else "#adbac7",
+            command=lambda cid=conv["id"]: self._load_conv(cid),
+        )
+        pad_left = 14 if indent else 4
+        if grid_row is not None:
+            btn.grid(row=grid_row, column=0, sticky="ew",
+                     padx=(pad_left, 4), pady=1)
+        else:
+            btn.grid(sticky="ew", padx=(pad_left, 4), pady=1)
+
+        btn.bind("<Button-3>", lambda e, cid=conv["id"]: self._conv_context_menu(e, cid))
+        self._conv_buttons[conv["id"]] = btn
+
+    def _toggle_account_section(self, acc_id: str):
+        if acc_id in self._collapsed_accounts:
+            self._collapsed_accounts.discard(acc_id)
+        else:
+            self._collapsed_accounts.add(acc_id)
+            self._expanded_accounts.discard(acc_id)
+        self._refresh_sidebar()
+
+    def _conv_context_menu(self, event, conv_id: str):
+        accounts  = list_accounts()
+        active_id = get_active_id()
+
+        menu = tk.Menu(self, tearoff=0,
+                       bg=C["sidebar"], fg=C["asst_fg"],
+                       activebackground=C["select"], activeforeground="#e6edf3",
+                       bd=0, relief=tk.FLAT)
+
+        menu.add_command(
+            label="Continue with…",
+            state="disabled",
+            font=("", 10),
+        )
+        menu.add_separator()
+
+        for acc_id, acc in accounts:
+            tag  = "api" if acc["mode"] == "api" else "sub"
+            tick = "✦  " if acc_id == active_id else "     "
+            menu.add_command(
+                label=f"{tick}{acc['label']}  [{tag}]",
+                command=lambda aid=acc_id, cid=conv_id: self._continue_with(aid, cid),
+            )
+
+        menu.add_separator()
+        menu.add_command(
+            label="🗑  Delete",
+            command=lambda cid=conv_id: self._delete_conv_by_id(cid),
+        )
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _continue_with(self, acc_id: str, conv_id: str):
+        old_id = get_active_id()
+        switched = acc_id != old_id
+        if switched:
+            set_active(acc_id)
+            self._rebuild_account_menu()
+            acc = get_active()
+            self._update_mode_pill(acc)
+            self.model_var.set(acc.get("model", MODELS[0]))
+            self._last_account_id = acc_id
+
+        self._inject_handoff = False  # history is already in the loaded conv
+        self._load_conv(conv_id)
+
+        if switched:
+            acc = get_active()
+            mode_label = "API Credits" if acc["mode"] == "api" else "Subscription"
+            self._write_switch_banner(
+                f"↔  Continuing with {acc['label']}  ({mode_label})  —  "
+                f"full history shared"
+            )
+
+    def _delete_conv_by_id(self, conv_id: str):
+        if not messagebox.askyesno("Delete", "Delete this conversation? This cannot be undone."):
+            return
+        delete_conversation(conv_id)
+        if conv_id == self.current_conv_id:
+            self._new_conv()
+        else:
+            self._refresh_sidebar()
 
     # ── Conversation ops ───────────────────────────────────────────────────────
 
@@ -1600,7 +2005,10 @@ class ChatApp(ctk.CTk):
             content = text
 
         if self.current_conv_id is None:
-            self.current_conv_id = create_conversation(project_id=self._active_project_id)
+            self.current_conv_id = create_conversation(
+                project_id=self._active_project_id,
+                account_id=get_active_id(),
+            )
 
         stored_text = display_text if isinstance(content, list) else content
         add_message(self.current_conv_id, "user", stored_text, acc["mode"],
@@ -1684,7 +2092,7 @@ class ChatApp(ctk.CTk):
         subprocess.Popen([sys.executable, str(switcher)], close_fds=True)
 
     def _start_claudeai_import(self):
-        ImportWizard(self, on_import_done=self._on_import_done)
+        LiveSyncDialog(self, on_import_done=self._on_import_done)
 
     def _on_import_done(self, convs: int, msgs: int):
         self._refresh_sidebar()
